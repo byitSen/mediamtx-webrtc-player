@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <title>MediaMTX WebRTC 多窗口摄像头播放器</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <link rel="stylesheet" href="./css/style.css" />
+  </head>
+  <body>
+    <header class="top-bar">
+      <div class="title">MediaMTX + WebRTC 多窗口摄像头播放器</div>
+      <div class="controls">
+        <button id="batchScreenshotBtn" class="btn primary" type="button">一键截图所有摄像头</button>
+        <button id="settingsBtn" class="btn secondary btn-settings" type="button">⚙ 设置</button>
+      </div>
+    </header>
+
+    <main>
+      <section class="status-panel">
+        <span id="saveDirDisplay" class="save-dir-display">浏览器环境下截图保存到下载目录，文件名中包含日期/时间/摄像头名称与统一时间戳。</span>
+      </section>
+
+      <section id="playersGrid" class="grid" aria-label="摄像头播放器网格"></section>
+    </main>
+
+    <!-- 设置面板：摄像头管理 + 全局配置 -->
+    <div id="settingsOverlay" class="modal-overlay hidden" aria-hidden="true">
+      <div class="modal-card">
+        <div class="modal-header">
+          <h2 class="modal-title">设置</h2>
+          <button type="button" id="settingsCloseBtn" class="btn-close" aria-label="关闭">×</button>
+        </div>
+        <div class="modal-body">
+          <fieldset class="settings-section">
+            <legend>后端（MediaMTX）</legend>
+            <label>WebRTC 基础地址（含端口）</label>
+            <input type="text" id="settingWebrtcBase" placeholder="http://localhost:8889" />
+            <span class="hint">示例：http://localhost:8889 或 http://127.0.0.1:8889</span>
+          </fieldset>
+
+          <fieldset class="settings-section">
+            <legend>前端（摄像头列表与布局）</legend>
+            <label>每行列数</label>
+            <select id="settingGridColumns">
+              <option value="2">2 列</option>
+              <option value="3" selected>3 列</option>
+              <option value="4">4 列</option>
+            </select>
+
+            <label>最大同时连接数</label>
+            <input type="number" id="settingMaxActive" min="1" max="64" step="1" value="8" />
+            <span class="hint">用于限制同一时间内活跃的 WebRTC 连接数，默认 8。</span>
+
+            <label>摄像头列表（名称 / 路径）</label>
+            <div id="settingCamerasList" class="cameras-list"></div>
+            <button type="button" id="settingAddCamera" class="btn secondary btn-sm">添加一路</button>
+          </fieldset>
+
+          <fieldset class="settings-section" id="settingScreenshotSection">
+            <legend>截图保存（桌面版）</legend>
+            <p id="settingSaveDirPath" class="hint save-dir-path" title="点击选择目录">未设置</p>
+            <button type="button" id="chooseSaveDirBtn" class="btn secondary">选择保存目录</button>
+          </fieldset>
+        </div>
+        <div class="modal-footer">
+          <button type="button" id="settingsCancelBtn" class="btn secondary">取消</button>
+          <button type="button" id="settingsSaveBtn" class="btn primary">保存并应用</button>
+        </div>
+      </div>
+    </div>
+
+    <footer class="footer">
+      <span>基于 MediaMTX + WebRTC，实现多窗口低延迟摄像头播放、统一时间戳一键截图、懒加载与连接池。</span>
+    </footer>
+
+    <script type="module" src="./js/app.js"></script>
+  </body>
+</html>

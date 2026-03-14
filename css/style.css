@@ -1,0 +1,383 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+  background: #0f172a;
+  color: #e5e7eb;
+}
+
+body {
+  display: flex;
+  flex-direction: column;
+}
+
+.top-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 16px;
+  background: #020617;
+  border-bottom: 1px solid #1f2937;
+  position: relative;
+  z-index: 11000;
+}
+
+.top-bar .title {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.top-bar .controls {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.btn {
+  border: none;
+  border-radius: 4px;
+  padding: 6px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.05s ease, box-shadow 0.15s ease;
+}
+
+.btn.primary {
+  background: #2563eb;
+  color: #f9fafb;
+}
+
+.btn.secondary {
+  background: #4b5563;
+  color: #e5e7eb;
+}
+
+.btn-sm {
+  padding: 4px 8px;
+  font-size: 12px;
+}
+
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn:not(:disabled):hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.35);
+}
+
+main {
+  flex: 1;
+  min-height: 0;
+  padding: 10px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.status-panel {
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.save-dir-display {
+  display: inline-block;
+  padding: 4px 8px;
+  border-radius: 4px;
+  background: #020617;
+}
+
+.toast-message {
+  position: fixed;
+  top: 56px;
+  left: 50%;
+  transform: translateX(-50%) translateY(-12px);
+  padding: 10px 18px;
+  border-radius: 8px;
+  background: #1e293b;
+  color: #f1f5f9;
+  font-size: 14px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  opacity: 0;
+  transition: opacity 0.2s ease, transform 0.2s ease;
+  z-index: 10000;
+  pointer-events: none;
+}
+.toast-message.toast-visible {
+  opacity: 1;
+  transform: translateX(-50%) translateY(0);
+}
+
+.grid {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.player-card {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: #020617;
+  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid #1f2937;
+}
+
+.player-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  font-size: 13px;
+  background: #020617;
+  border-bottom: 1px solid #1f2937;
+}
+
+.player-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.player-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12px;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #4b5563;
+}
+
+.player-status.online .status-dot {
+  background: #22c55e;
+}
+
+.player-status.connecting .status-dot {
+  background: #facc15;
+}
+
+.player-status.offline .status-dot {
+  background: #f97316;
+}
+
+.player-status.not-ready .status-dot {
+  background: #ef4444;
+}
+
+.video-wrapper {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: #020617;
+}
+
+.player-video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: #020617;
+}
+
+.player-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 8px;
+  font-size: 12px;
+  background: #020617;
+  border-top: 1px  solid #1f2937;
+}
+
+.player-footer-left,
+.player-footer-right {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.stats-text {
+  font-size: 11px;
+  color: #9ca3af;
+}
+
+/* 应用内全屏模式 */
+.player-card.fullscreen-mode {
+  position: fixed;
+  inset: 0;
+  margin: 0;
+  z-index: 10000;
+  border-radius: 0;
+}
+
+.player-card.fullscreen-mode .player-video {
+  object-fit: contain;
+}
+
+.footer {
+  padding: 8px 14px;
+  font-size: 12px;
+  color: #6b7280;
+  border-top: 1px solid #1f2937;
+  background: #020617;
+}
+
+/* 设置面板 */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(15, 23, 42, 0.8);
+}
+
+.modal-overlay.hidden {
+  display: none;
+}
+
+.modal-card {
+  width: 100%;
+  max-width: 640px;
+  max-height: 80vh;
+  background: #020617;
+  border-radius: 8px;
+  border: 1px solid #1f2937;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 10px 14px;
+  border-bottom: 1px solid #1f2937;
+}
+
+.modal-title {
+  margin: 0;
+  font-size: 14px;
+}
+
+.btn-close {
+  border: none;
+  background: transparent;
+  color: #9ca3af;
+  font-size: 18px;
+  cursor: pointer;
+}
+
+.modal-body {
+  padding: 10px 14px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.settings-section {
+  border: 1px solid #1f2937;
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+
+.settings-section legend {
+  padding: 0 4px;
+  font-size: 12px;
+  color: #9ca3af;
+}
+
+.settings-section label {
+  display: block;
+  margin-top: 6px;
+  margin-bottom: 4px;
+  font-size: 12px;
+}
+
+.settings-section input,
+.settings-section select {
+  width: 100%;
+  padding: 6px 8px;
+  border-radius: 4px;
+  border: 1px solid #374151;
+  background: #020617;
+  color: #e5e7eb;
+  font-size: 13px;
+}
+
+.hint {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: #6b7280;
+}
+
+.save-dir-path[title="点击选择目录"]:hover {
+  color: #2563eb;
+  text-decoration: underline;
+}
+
+.cameras-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.camera-row {
+  display: grid;
+  grid-template-columns: 1.4fr 1.6fr auto;
+  gap: 6px;
+}
+
+.camera-row input {
+  width: 100%;
+}
+
+.btn-remove {
+  border: none;
+  border-radius: 4px;
+  padding: 4px 8px;
+  background: #7f1d1d;
+  color: #fee2e2;
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.modal-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  padding: 8px 14px 10px;
+  border-top: 1px solid #1f2937;
+}
+
+@media (max-width: 768px) {
+  .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 520px) {
+  .grid {
+    grid-template-columns: repeat(1, minmax(0, 1fr));
+  }
+}

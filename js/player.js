@@ -56,13 +56,9 @@ export class Player {
 
     const left = document.createElement("div");
     left.className = "player-footer-left";
-    const btnShot = document.createElement("button");
-    btnShot.className = "btn btn-sm secondary";
-    btnShot.textContent = "截图";
     const btnFull = document.createElement("button");
     btnFull.className = "btn btn-sm secondary";
     btnFull.textContent = "全屏";
-    left.appendChild(btnShot);
     left.appendChild(btnFull);
 
     const right = document.createElement("div");
@@ -91,7 +87,6 @@ export class Player {
       statusText: text,
       videoWrapper,
       video,
-      btnShot,
       btnFull,
       btnReconnect,
       statsText,
@@ -99,11 +94,6 @@ export class Player {
   }
 
   _bindEvents() {
-    this.dom.btnShot.addEventListener("click", () => {
-      if (!this.isConnected) return;
-      this.singleScreenshot();
-    });
-
     this.dom.btnFull.addEventListener("click", () => {
       this.toggleFullscreenInApp();
     });
@@ -357,6 +347,7 @@ export class Player {
     canvas.height = video.videoHeight;
     const ctx = canvas.getContext("2d");
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    // 使用 PNG 无损，画质最佳（体积较大，约 2～5MB/张）
     const dataUrl = canvas.toDataURL("image/png");
 
     const dir = `${date}/${time}`;

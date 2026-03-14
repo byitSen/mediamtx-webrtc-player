@@ -1,6 +1,6 @@
 # MediaMTX 配置 - WebRTC 流（H.265 源自动转 H.264 后透传）
 # 与前端播放器默认对接：WebRTC 端口 8889，路径如 cam1 → http://localhost:8889/cam1/whep
-# 依赖：系统已安装 FFmpeg（用于 H.265→H.264 转码）。拉流用 TCP 减少丢包；FFmpeg 用软解避免 macOS VideoToolbox 与 libx264 的 v024 格式不兼容。
+# 依赖：系统已安装 FFmpeg（用于 H.265→H.264 转码）。拉流用 TCP 减少丢包；FFmpeg 使用 -hwaccel auto 自动硬解（不可用时回退软解）。
 
 ###############################################
 # 全局
@@ -60,9 +60,10 @@ paths:
     sourceOnDemand: true
     sourceOnDemandStartTimeout: 10s
     sourceOnDemandCloseAfter: 10s
-  # 对外路径：有读者时启动 FFmpeg 从 cam1_raw 取流，软解 H.265 转 H.264 后发布到 cam1
+  # 对外路径：有读者时启动 FFmpeg 从 cam1_raw 取流，自动硬解 H.265 转 H.264 后发布到 cam1
   cam1:
-    runOnDemand: ffmpeg -rtsp_transport tcp -i rtsp://localhost:$RTSP_PORT/cam1_raw -map 0:v:0 -c:v libx264 -pix_fmt yuv420p -preset ultrafast -b:v 600k -max_muxing_queue_size 1024 -f rtsp rtsp://localhost:$RTSP_PORT/$MTX_PATH
+    runOnDemand: ffmpeg -hwaccel auto -rtsp_transport tcp -i rtsp://localhost:$RTSP_PORT/cam1_raw -map 0:v:0 -c:v libx264 -pix_fmt yuv420p -preset ultrafast -b:v 600k -max_muxing_queue_size 1024 -f rtsp rtsp://localhost:$RTSP_PORT/$MTX_PATH
+    # runOnDemand: ffmpeg -rtsp_transport tcp -i rtsp://localhost:$RTSP_PORT/cam1_raw -map 0:v:0 -c:v libx264 -pix_fmt yuv420p -preset ultrafast -b:v 600k -max_muxing_queue_size 1024 -f rtsp rtsp://localhost:$RTSP_PORT/$MTX_PATH
     runOnDemandRestart: true
     runOnDemandStartTimeout: 15s
     runOnDemandCloseAfter: 10s
@@ -73,9 +74,10 @@ paths:
     sourceOnDemand: true
     sourceOnDemandStartTimeout: 10s
     sourceOnDemandCloseAfter: 10s
-  # 对外路径：有读者时启动 FFmpeg 从 cam1_raw 取流，软解 H.265 转 H.264 后发布到 cam1
+  # 对外路径：有读者时启动 FFmpeg 从 cam2_raw 取流，自动硬解 H.265 转 H.264 后发布到 cam2
   cam2:
-    runOnDemand: ffmpeg -rtsp_transport tcp -i rtsp://localhost:$RTSP_PORT/cam2_raw -map 0:v:0 -c:v libx264 -pix_fmt yuv420p -preset ultrafast -b:v 600k -max_muxing_queue_size 1024 -f rtsp rtsp://localhost:$RTSP_PORT/$MTX_PATH
+    runOnDemand: ffmpeg -hwaccel auto -rtsp_transport tcp -i rtsp://localhost:$RTSP_PORT/cam2_raw -map 0:v:0 -c:v libx264 -pix_fmt yuv420p -preset ultrafast -b:v 600k -max_muxing_queue_size 1024 -f rtsp rtsp://localhost:$RTSP_PORT/$MTX_PATH
+    # runOnDemand: ffmpeg -rtsp_transport tcp -i rtsp://localhost:$RTSP_PORT/cam2_raw -map 0:v:0 -c:v libx264 -pix_fmt yuv420p -preset ultrafast -b:v 600k -max_muxing_queue_size 1024 -f rtsp rtsp://localhost:$RTSP_PORT/$MTX_PATH
     runOnDemandRestart: true
     runOnDemandStartTimeout: 15s
     runOnDemandCloseAfter: 10s
@@ -85,9 +87,10 @@ paths:
     sourceOnDemand: true
     sourceOnDemandStartTimeout: 10s
     sourceOnDemandCloseAfter: 10s
-  # 对外路径：有读者时启动 FFmpeg 从 cam1_raw 取流，软解 H.265 转 H.264 后发布到 cam1
+  # 对外路径：有读者时启动 FFmpeg 从 cam3_raw 取流，自动硬解 H.265 转 H.264 后发布到 cam3
   cam3:
-    runOnDemand: ffmpeg -rtsp_transport tcp -i rtsp://localhost:$RTSP_PORT/cam3_raw -map 0:v:0 -c:v libx264 -pix_fmt yuv420p -preset ultrafast -b:v 600k -max_muxing_queue_size 1024 -f rtsp rtsp://localhost:$RTSP_PORT/$MTX_PATH
+    runOnDemand: ffmpeg -hwaccel auto -rtsp_transport tcp -i rtsp://localhost:$RTSP_PORT/cam3_raw -map 0:v:0 -c:v libx264 -pix_fmt yuv420p -preset ultrafast -b:v 600k -max_muxing_queue_size 1024 -f rtsp rtsp://localhost:$RTSP_PORT/$MTX_PATH
+    # runOnDemand: ffmpeg -rtsp_transport tcp -i rtsp://localhost:$RTSP_PORT/cam3_raw -map 0:v:0 -c:v libx264 -pix_fmt yuv420p -preset ultrafast -b:v 600k -max_muxing_queue_size 1024 -f rtsp rtsp://localhost:$RTSP_PORT/$MTX_PATH
     runOnDemandRestart: true
     runOnDemandStartTimeout: 15s
     runOnDemandCloseAfter: 10s

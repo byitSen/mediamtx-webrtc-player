@@ -44,6 +44,9 @@ mediamtx-webrtc-player/
    - 按 MediaMTX 官方文档部署服务（本地或服务器）。
    - 配置 RTSP 摄像头为 MediaMTX 的 `paths`，并确认 WebRTC/WHEP 端点可用，例如：
      - `http://localhost:8889/cam1/whep`。
+   - 项目根目录提供 MediaMTX 启动/停止脚本（需先将 MediaMTX 可执行文件加入 PATH 或放入项目根目录）：
+     - **macOS/Linux**：`./mediamtx.sh start` 启动，`./mediamtx.sh stop` 停止（无执行权限时先执行 `chmod +x mediamtx.sh`）。
+     - **Windows**：`mediamtx.bat start` 启动，`mediamtx.bat stop` 停止。
 
 3. **实现前端页面（可选）**
 

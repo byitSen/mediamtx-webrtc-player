@@ -17,6 +17,9 @@ src-tauri/gen/
 # Optional
 *.local
 
+# MediaMTX 脚本生成的 PID 文件
+.mediamtx.pid
+
 # Tauri CLI / local
 /tauri
 mediamtx-webrtc-player@*

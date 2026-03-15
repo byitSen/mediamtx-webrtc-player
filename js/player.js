@@ -93,6 +93,18 @@ export class Player {
     };
   }
 
+  /** 根据视频宽高动态设置 .video-wrapper 的宽高比 */
+  _updateVideoWrapperAspectRatio() {
+    const { video, videoWrapper } = this.dom;
+    const w = video.videoWidth;
+    const h = video.videoHeight;
+    if (w > 0 && h > 0) {
+      videoWrapper.style.aspectRatio = `${w} / ${h}`;
+    } else {
+      videoWrapper.style.aspectRatio = "";
+    }
+  }
+
   _bindEvents() {
     this.dom.btnFull.addEventListener("click", () => {
       this.toggleFullscreenInApp();
@@ -105,6 +117,9 @@ export class Player {
     this.dom.btnReconnect.addEventListener("click", () => {
       this.reconnectNow();
     });
+
+    this.dom.video.addEventListener("loadedmetadata", () => this._updateVideoWrapperAspectRatio());
+    this.dom.video.addEventListener("resize", () => this._updateVideoWrapperAspectRatio());
   }
 
   setStatus(state, subText) {

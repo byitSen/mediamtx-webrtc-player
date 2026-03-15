@@ -27,11 +27,11 @@ const settingsOverlay = document.getElementById("settingsOverlay");
 const settingsCloseBtn = document.getElementById("settingsCloseBtn");
 const settingsCancelBtn = document.getElementById("settingsCancelBtn");
 const settingsSaveBtn = document.getElementById("settingsSaveBtn");
-const settingWebrtcBase = document.getElementById("settingWebrtcBase");
-const settingGridColumns = document.getElementById("settingGridColumns");
-const settingMaxActive = document.getElementById("settingMaxActive");
-const settingCamerasList = document.getElementById("settingCamerasList");
-const settingAddCamera = document.getElementById("settingAddCamera");
+  const settingWebrtcBase = document.getElementById("settingWebrtcBase");
+  const settingGridColumns = document.getElementById("settingGridColumns");
+  const settingMaxActive = document.getElementById("settingMaxActive");
+  const settingCamerasList = document.getElementById("settingCamerasList");
+  const settingAddCamera = document.getElementById("settingAddCamera");
 const settingsBtn = document.getElementById("settingsBtn");
 
 function renderCameraRow(name = "", path = "", index = 0) {

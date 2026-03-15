@@ -420,11 +420,11 @@ export class Player {
     canvas.height = video.videoHeight;
     const ctx = canvas.getContext("2d");
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
-    // 使用 PNG 无损，画质最佳（体积较大，约 2～5MB/张）
-    const dataUrl = canvas.toDataURL("image/png");
+    // 使用 JPEG 有损压缩，体积更小（质量 0.92）
+    const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
 
     const dir = `${date}/${time}`;
-    const fileName = `${this.camera.name || this.camera.path}_${ts}.png`;
+    const fileName = `${this.camera.name || this.camera.path}_${ts}.jpg`;
     const fullPath = `${dir}/${fileName}`;
 
     if (window.electronAPI) {

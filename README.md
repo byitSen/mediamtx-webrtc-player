@@ -44,6 +44,7 @@ mediamtx-webrtc-player/
    - 按 MediaMTX 官方文档部署服务（本地或服务器）。
    - 配置 RTSP 摄像头为 MediaMTX 的 `paths`，并确认 WebRTC/WHEP 端点可用，例如：
      - `http://localhost:8889/cam1/whep`。
+   - **H.265 源**：当前桌面端（Electron/Chromium）无法在 WebRTC 中直接播放 H.265，需在 MediaMTX 里用 FFmpeg 将 H.265 转成 H.264。请使用**转码后的路径**（如 `cam1`），不要用直连 H.265 的路径（如 `cam1_raw`）。参考根目录 `mediamtx.yml` 中的 `runOnDemand` 示例。
    - 项目根目录提供 MediaMTX 启动/停止脚本（需先将 MediaMTX 可执行文件加入 PATH 或放入项目根目录）：
      - **macOS/Linux**：`./mediamtx.sh start` 启动，`./mediamtx.sh stop` 停止（无执行权限时先执行 `chmod +x mediamtx.sh`）。
      - **Windows**：`mediamtx.bat start` 启动，`mediamtx.bat stop` 停止。
@@ -54,6 +55,32 @@ mediamtx-webrtc-player/
    - 或从既有的 `webrtc-camera-player` 项目中迁移代码，并按本仓库文档对其进行连接池、懒加载、性能监控等方面的扩展。
 
 ## 运行建议（示例）
+
+### 桌面版（Electron，推荐）
+
+- 安装依赖并启动（使用内置 Chromium，支持 H.265 等）：
+
+  ```bash
+  npm install
+  npm run start
+  ```
+
+- 开发时先起静态服务再启动 Electron，可热刷前端：
+
+  ```bash
+  npm run dev          # 终端 1：http://localhost:8000
+  npm run start:dev    # 终端 2：Electron 加载上述地址
+  ```
+
+- 打包安装包：
+
+  ```bash
+  npm run build        # 根据当前系统生成 win/mac 安装包到 release/
+  npm run build:win    # 仅 Windows
+  npm run build:mac    # 仅 macOS
+  ```
+
+### 纯浏览器
 
 - 安装静态服务器（可选）：
 

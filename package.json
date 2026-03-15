@@ -1,19 +1,44 @@
 {
   "name": "mediamtx-webrtc-player",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
+  "main": "electron/main.js",
   "scripts": {
     "dev": "npx serve . -p 8000",
-    "proxy": "npx serve . -p 8000",
-    "tauri": "tauri",
-    "build:tauri": "vite build"
+    "start": "npx electron .",
+    "start:dev": "cross-env NODE_ENV=development npx electron .",
+    "build": "electron-builder",
+    "build:win": "electron-builder --win",
+    "build:mac": "electron-builder --mac"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.10.1",
-    "vite": "^8.0.0"
+    "cross-env": "^7.0.3",
+    "electron": "^36.0.0",
+    "electron-builder": "^25.0.0"
   },
-  "dependencies": {
-    "@tauri-apps/api": "^2.10.1",
-    "@tauri-apps/plugin-dialog": "^2.6.0"
+  "dependencies": {},
+  "build": {
+    "appId": "com.mediamtx.webrtc-player",
+    "productName": "MediaMTX WebRTC Player",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "index.html",
+      "css/**",
+      "js/**",
+      "electron/**"
+    ],
+    "win": {
+      "target": ["nsis", "portable"]
+    },
+    "mac": {
+      "target": ["dmg", "zip"],
+      "category": "public.app-category.video"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   }
 }

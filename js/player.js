@@ -1,6 +1,59 @@
 import { buildWhepUrl, getEffectiveSettings } from "./config.js";
 import { formatTimestamp, saveImageToPath } from "./utils.js";
 
+/**
+ * 在 SDP offer 的 video 段注入 H.265，使 MediaMTX 认为客户端支持 H.265 并返回 H.265 流。
+ * 仅在 Tauri 环境下使用（Windows WebView2 已通过 HevcVideoDecoder 启用解码，macOS WebKit 原生支持）。
+ * @param {string} sdp - 原始 SDP offer
+ * @returns {string} 注入 H.265 后的 SDP，若已包含 H.265 或解析失败则返回原 SDP
+ */
+function injectH265IntoOffer(sdp) {
+  if (!sdp || typeof sdp !== "string") return sdp;
+  if (/a=rtpmap:\d+\s+H265\/\d+/i.test(sdp)) return sdp;
+
+  const lines = sdp.split(/\r?\n/);
+  let videoStart = -1;
+  let mVideoLineIdx = -1;
+  let videoPtUsed = new Set();
+
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
+    if (line.startsWith("m=video ")) {
+      mVideoLineIdx = i;
+      if (videoStart < 0) videoStart = i;
+      const parts = line.split(/\s+/);
+      // m=video <port> UDP/TLS/RTP/SAVPF pt1 pt2 ...
+      for (let j = 4; j < parts.length; j++) {
+        const n = parseInt(parts[j], 10);
+        if (!Number.isNaN(n)) videoPtUsed.add(n);
+      }
+    } else if (line.startsWith("a=rtpmap:") && videoStart >= 0) {
+      const m = line.match(/^a=rtpmap:(\d+)/);
+      if (m) videoPtUsed.add(parseInt(m[1], 10));
+    } else if (line.startsWith("m=") && videoStart >= 0 && mVideoLineIdx >= 0) {
+      break;
+    }
+  }
+
+  if (mVideoLineIdx < 0) return sdp;
+  let h265Pt = 102;
+  while (videoPtUsed.has(h265Pt) && h265Pt <= 127) h265Pt++;
+  if (h265Pt > 127) return sdp;
+
+  const mLine = lines[mVideoLineIdx];
+  const parts = mLine.split(/\s+/);
+  if (parts.length < 5) return sdp;
+  parts.splice(5, 0, String(h265Pt));
+  lines[mVideoLineIdx] = parts.join(" ");
+
+  const insertIdx = mVideoLineIdx + 1;
+  const rtpmap = `a=rtpmap:${h265Pt} H265/90000`;
+  const fmtp = `a=fmtp:${h265Pt} profile-id=1;level-id=93`;
+  lines.splice(insertIdx, 0, rtpmap, fmtp);
+
+  return lines.join("\r\n");
+}
+
 export class Player {
   constructor(containerEl, cameraConfig) {
     this.containerEl = containerEl;
@@ -168,6 +221,9 @@ export class Player {
           stream.addTrack(t);
         }
       });
+      if (evt.track.kind === "video") {
+        this.dom.video.play().catch(() => {});
+      }
     };
 
     pc.onconnectionstatechange = () => {
@@ -196,6 +252,8 @@ export class Player {
       await this.waitForIceGatheringComplete(pc, 2000);
 
       const localSdp = pc.localDescription ? pc.localDescription.sdp : offer.sdp;
+      // 不注入 H.265：Chromium 在 setLocalDescription/setRemoteDescription 时不接受与 offer 不一致的 H.265，会导致报错；仅用浏览器原生 offer，H.264 流可正常出画面，H.265 流会返回 400 并提示编码不支持
+      const bodySdp = localSdp;
 
       console.log(`[${this.camera.name || this.camera.path}] WHEP URL: ${url}`);
       let res;
@@ -207,7 +265,7 @@ export class Player {
             "Content-Type": "application/sdp",
             Accept: "application/sdp",
           },
-          body: localSdp,
+          body: bodySdp,
         });
       } catch (fetchErr) {
         console.error(`[${this.camera.name || this.camera.path}] WHEP fetch 异常:`, fetchErr?.message || fetchErr);
@@ -219,7 +277,7 @@ export class Player {
         const isCodecError = res.status === 400 && /codecs?\s+not\s+supported/i.test(body);
         if (isCodecError) {
           this.setStatus("not_ready", "编码不被浏览器支持");
-          this.dom.status.title = "当前 RTSP 流编码（如 H265）不被浏览器 WebRTC 支持，请使用 H264 编码的摄像头或通过 FFmpeg 转成 H264 再接入。";
+          this.dom.status.title = "当前路径为 H.265 源，本端无法直接解码。请在 MediaMTX 中为该路径配置 runOnDemand/FFmpeg 将 H.265 转成 H.264，前端连接转码后的路径（如 cam1 而非 cam1_raw）。参考项目根目录 mediamtx.yml 示例。";
           console.warn(`[${this.camera.name || this.camera.path}] 编码不支持: 需 H264 等浏览器支持的编码，当前源可能为 H265/其他。`);
           this.reconnectAttempts += 1;
           const delay = Math.min(15000 + this.reconnectAttempts * 5000, 60000);
@@ -239,7 +297,7 @@ export class Player {
         throw new Error(`WHEP 请求失败: ${res.status}`);
       }
 
-      const answerSdp = await res.text();
+      let answerSdp = await res.text();
       if (!answerSdp || !answerSdp.includes("v=")) {
         console.error(`[${this.camera.name || this.camera.path}] 无效的 SDP 应答`, answerSdp?.slice(0, 200));
         throw new Error("无效的 SDP 应答");
@@ -369,7 +427,7 @@ export class Player {
     const fileName = `${this.camera.name || this.camera.path}_${ts}.png`;
     const fullPath = `${dir}/${fileName}`;
 
-    if (window.__TAURI__) {
+    if (window.electronAPI) {
       return { relativePath: fullPath, dataUrl };
     }
     await saveImageToPath(fullPath, dataUrl);

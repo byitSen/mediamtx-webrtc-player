@@ -4,7 +4,7 @@ import { setMaxActiveConnections } from "./webrtc-pool.js";
 import { dataUrlToBase64 } from "./utils.js";
 
 const SCREENSHOT_INTERVAL_MS = 200;
-const TAURI_SAVE_DIR_KEY = "tauri_screenshot_dir";
+const DESKTOP_SAVE_DIR_KEY = "desktop_screenshot_dir";
 const TOAST_DURATION_MS = 2500;
 
 function showToast(message) {
@@ -123,17 +123,12 @@ async function batchScreenshot() {
   const players = getPlayerInstances();
   if (!players.length) return;
   const ts = Date.now();
-  const isTauri = isTauriEnv();
 
-  if (isTauri) {
-    const invoke =
-      window.__TAURI__?.core?.invoke ?? (await import("@tauri-apps/api/core")).invoke;
-    const dialog =
-      window.__TAURI__?.dialog ?? await import("@tauri-apps/plugin-dialog");
-    let baseDir = localStorage.getItem(TAURI_SAVE_DIR_KEY);
+  if (isElectronEnv()) {
+    let baseDir = localStorage.getItem(DESKTOP_SAVE_DIR_KEY);
     if (!baseDir) {
-      baseDir = await dialog.open({ directory: true, multiple: false });
-      if (baseDir) localStorage.setItem(TAURI_SAVE_DIR_KEY, baseDir);
+      baseDir = await window.electronAPI.chooseSaveDir();
+      if (baseDir) localStorage.setItem(DESKTOP_SAVE_DIR_KEY, baseDir);
     }
     if (!baseDir) return;
     let success = 0;
@@ -143,12 +138,12 @@ async function batchScreenshot() {
           const result = await p.singleScreenshot(ts);
           if (result?.relativePath && result?.dataUrl) {
             const base64Png = dataUrlToBase64(result.dataUrl);
-            await invoke("save_screenshot", {
+            const res = await window.electronAPI.saveScreenshot({
               baseDir,
               relativePath: result.relativePath,
               base64Png,
             });
-            success += 1;
+            if (res?.ok) success += 1;
           }
           await new Promise((r) => setTimeout(r, SCREENSHOT_INTERVAL_MS));
         } catch (e) {
@@ -181,10 +176,10 @@ async function batchScreenshot() {
 }
 
 function updateSaveDirDisplay() {
-  const isTauri = isTauriEnv();
-  const dir = isTauri ? localStorage.getItem(TAURI_SAVE_DIR_KEY) : null;
+  const isDesktop = isElectronEnv();
+  const dir = isDesktop ? localStorage.getItem(DESKTOP_SAVE_DIR_KEY) : null;
   if (saveDirDisplay) {
-    if (isTauri) {
+    if (isDesktop) {
       saveDirDisplay.textContent = dir
         ? `截图保存到：${dir}`
         : "在设置中选择保存目录后，使用一键截图。";
@@ -196,30 +191,27 @@ function updateSaveDirDisplay() {
   const settingSaveDirPath = document.getElementById("settingSaveDirPath");
   const chooseSaveDirBtn = document.getElementById("chooseSaveDirBtn");
   if (settingSaveDirPath) {
-    settingSaveDirPath.textContent = isTauri ? (dir || "未设置") : "仅桌面版可用";
-    settingSaveDirPath.style.cursor = isTauri ? "pointer" : "";
-    settingSaveDirPath.title = isTauri ? "点击选择目录" : "";
+    settingSaveDirPath.textContent = isDesktop ? (dir || "未设置") : "仅桌面版可用";
+    settingSaveDirPath.style.cursor = isDesktop ? "pointer" : "";
+    settingSaveDirPath.title = isDesktop ? "点击选择目录" : "";
   }
   if (chooseSaveDirBtn) {
-    chooseSaveDirBtn.disabled = !isTauri;
-    chooseSaveDirBtn.title = isTauri ? "打开目录选择" : "仅桌面版可用";
+    chooseSaveDirBtn.disabled = !isDesktop;
+    chooseSaveDirBtn.title = isDesktop ? "打开目录选择" : "仅桌面版可用";
   }
 }
 
-function isTauriEnv() {
+function isElectronEnv() {
   if (typeof window === "undefined") return false;
-  return !!(window.__TAURI__ || window.isTauri);
+  return !!window.electronAPI;
 }
 
 async function chooseSaveDir() {
-  if (!isTauriEnv()) return;
+  if (!isElectronEnv()) return;
   try {
-    const openDialog =
-      window.__TAURI__?.dialog?.open ||
-      (await import("@tauri-apps/plugin-dialog")).open;
-    const baseDir = await openDialog({ directory: true, multiple: false });
+    const baseDir = await window.electronAPI.chooseSaveDir();
     if (baseDir) {
-      localStorage.setItem(TAURI_SAVE_DIR_KEY, baseDir);
+      localStorage.setItem(DESKTOP_SAVE_DIR_KEY, baseDir);
       updateSaveDirDisplay();
     }
   } catch (e) {
@@ -240,7 +232,7 @@ function setupGlobalControls() {
   if (chooseSaveDirBtn) chooseSaveDirBtn.addEventListener("click", chooseSaveDir);
   if (settingSaveDirPath) {
     settingSaveDirPath.addEventListener("click", () => {
-      if (isTauriEnv()) chooseSaveDir();
+      if (isElectronEnv()) chooseSaveDir();
     });
   }
 

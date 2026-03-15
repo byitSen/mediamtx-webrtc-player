@@ -34,6 +34,18 @@ const settingsSaveBtn = document.getElementById("settingsSaveBtn");
   const settingAddCamera = document.getElementById("settingAddCamera");
 const settingsBtn = document.getElementById("settingsBtn");
 
+const settingWindowSizeSection = document.getElementById("settingWindowSizeSection");
+const settingWindowPreset = document.getElementById("settingWindowPreset");
+const settingWindowWidth = document.getElementById("settingWindowWidth");
+const settingWindowHeight = document.getElementById("settingWindowHeight");
+const settingWindowWidthSlider = document.getElementById("settingWindowWidthSlider");
+const settingWindowHeightSlider = document.getElementById("settingWindowHeightSlider");
+
+const WINDOW_WIDTH_MIN = 520;
+const WINDOW_WIDTH_MAX = 3840;
+const WINDOW_HEIGHT_MIN = 420;
+const WINDOW_HEIGHT_MAX = 2160;
+
 function renderCameraRow(name = "", path = "", index = 0) {
   if (!settingCamerasList) return;
   const row = document.createElement("div");
@@ -81,6 +93,19 @@ function openSettings() {
     settingCamerasList.innerHTML = "";
     cameras.forEach((c, i) => renderCameraRow(c.name, c.path, i));
   }
+
+  const winW = Math.max(WINDOW_WIDTH_MIN, Math.min(WINDOW_WIDTH_MAX, cfg.windowWidth ?? 1020));
+  const winH = Math.max(WINDOW_HEIGHT_MIN, Math.min(WINDOW_HEIGHT_MAX, cfg.windowHeight ?? 820));
+  if (settingWindowWidth) settingWindowWidth.value = String(winW);
+  if (settingWindowHeight) settingWindowHeight.value = String(winH);
+  if (settingWindowWidthSlider) settingWindowWidthSlider.value = String(winW);
+  if (settingWindowHeightSlider) settingWindowHeightSlider.value = String(winH);
+  if (settingWindowPreset) updateWindowPresetFromSize(winW, winH);
+
+  if (settingWindowSizeSection) {
+    settingWindowSizeSection.style.display = isElectronEnv() ? "" : "none";
+  }
+
   updateSaveDirDisplay();
 }
 
@@ -88,6 +113,25 @@ function closeSettings() {
   if (!settingsOverlay) return;
   settingsOverlay.classList.add("hidden");
   settingsOverlay.setAttribute("aria-hidden", "true");
+}
+
+function updateWindowPresetFromSize(w, h) {
+  if (!settingWindowPreset) return;
+  const v = `${w}x${h}`;
+  const opt = Array.from(settingWindowPreset.options).find((o) => o.value === v);
+  settingWindowPreset.value = opt ? opt.value : "custom";
+}
+
+function applyWindowPreset(value) {
+  if (!value || value === "custom") return;
+  const [w, h] = value.split("x").map((n) => parseInt(n, 10));
+  if (!w || !h) return;
+  const nw = Math.max(WINDOW_WIDTH_MIN, Math.min(WINDOW_WIDTH_MAX, w));
+  const nh = Math.max(WINDOW_HEIGHT_MIN, Math.min(WINDOW_HEIGHT_MAX, h));
+  if (settingWindowWidth) settingWindowWidth.value = String(nw);
+  if (settingWindowHeight) settingWindowHeight.value = String(nh);
+  if (settingWindowWidthSlider) settingWindowWidthSlider.value = String(nw);
+  if (settingWindowHeightSlider) settingWindowHeightSlider.value = String(nh);
 }
 
 function addCameraRow() {
@@ -109,9 +153,15 @@ function saveSettingsFromForm() {
   const webrtcBase = (settingWebrtcBase?.value || "").trim() || "http://localhost:8889";
   const gridColumns = Math.max(1, Math.min(4, parseInt(settingGridColumns?.value || "2", 10) || 2));
   const maxActive = Math.max(1, Math.min(64, parseInt(settingMaxActive?.value || "8", 10) || 8));
+  const windowWidth = Math.max(WINDOW_WIDTH_MIN, Math.min(WINDOW_WIDTH_MAX, parseInt(settingWindowWidth?.value || "1020", 10) || 1020));
+  const windowHeight = Math.max(WINDOW_HEIGHT_MIN, Math.min(WINDOW_HEIGHT_MAX, parseInt(settingWindowHeight?.value || "820", 10) || 820));
 
-  const next = { ...current, webrtcBase, cameras, gridColumns, maxActiveConnections: maxActive };
+  const next = { ...current, webrtcBase, cameras, gridColumns, maxActiveConnections: maxActive, windowWidth, windowHeight };
   saveSettings(next);
+
+  if (isElectronEnv() && window.electronAPI.setWindowSize) {
+    window.electronAPI.setWindowSize(windowWidth, windowHeight);
+  }
 
   setMaxActiveConnections(maxActive);
   applyGridColumns(playersGrid, gridColumns);
@@ -236,6 +286,42 @@ function setupGlobalControls() {
     });
   }
 
+  if (settingWindowWidthSlider && settingWindowWidth) {
+    settingWindowWidthSlider.addEventListener("input", () => {
+      settingWindowWidth.value = settingWindowWidthSlider.value;
+      updateWindowPresetFromSize(parseInt(settingWindowWidthSlider.value, 10), parseInt(settingWindowHeight?.value || "820", 10));
+    });
+  }
+  if (settingWindowWidth && settingWindowWidthSlider) {
+    settingWindowWidth.addEventListener("input", () => {
+      const v = Math.max(WINDOW_WIDTH_MIN, Math.min(WINDOW_WIDTH_MAX, parseInt(settingWindowWidth.value, 10) || 1020));
+      settingWindowWidth.value = String(v);
+      settingWindowWidthSlider.value = String(v);
+      updateWindowPresetFromSize(v, parseInt(settingWindowHeight?.value || "820", 10));
+    });
+  }
+  if (settingWindowHeightSlider && settingWindowHeight) {
+    settingWindowHeightSlider.addEventListener("input", () => {
+      settingWindowHeight.value = settingWindowHeightSlider.value;
+      updateWindowPresetFromSize(parseInt(settingWindowWidth?.value || "1020", 10), parseInt(settingWindowHeightSlider.value, 10));
+    });
+  }
+  if (settingWindowHeight && settingWindowHeightSlider) {
+    settingWindowHeight.addEventListener("input", () => {
+      const v = Math.max(WINDOW_HEIGHT_MIN, Math.min(WINDOW_HEIGHT_MAX, parseInt(settingWindowHeight.value, 10) || 820));
+      settingWindowHeight.value = String(v);
+      settingWindowHeightSlider.value = String(v);
+      updateWindowPresetFromSize(parseInt(settingWindowWidth?.value || "1020", 10), v);
+    });
+  }
+  if (settingWindowPreset) {
+    settingWindowPreset.addEventListener("change", () => applyWindowPreset(settingWindowPreset.value));
+  }
+
+  if (settingWindowSizeSection) {
+    settingWindowSizeSection.style.display = isElectronEnv() ? "" : "none";
+  }
+
   updateSaveDirDisplay();
 }
 
@@ -247,4 +333,15 @@ window.addEventListener("load", () => {
   setMaxActiveConnections(maxActive);
   applyGridColumns(playersGrid, gridCols);
   initPlayers(playersGrid, cfg.cameras || []);
+
+  if (isElectronEnv() && window.electronAPI.setWindowSize) {
+    const w = cfg.windowWidth ?? 1020;
+    const h = cfg.windowHeight ?? 820;
+    if (Number.isFinite(w) && Number.isFinite(h)) {
+      window.electronAPI.setWindowSize(
+        Math.max(WINDOW_WIDTH_MIN, Math.min(WINDOW_WIDTH_MAX, w)),
+        Math.max(WINDOW_HEIGHT_MIN, Math.min(WINDOW_HEIGHT_MAX, h))
+      );
+    }
+  }
 });

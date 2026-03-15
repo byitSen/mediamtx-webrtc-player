@@ -6,6 +6,8 @@ function getDefaultSettings() {
     gridColumns: 2,
     maxActiveConnections: 8,
     cameras: [{ name: "摄像头1", path: "cam1" }],
+    windowWidth: 1020,
+    windowHeight: 820,
   };
 }
 

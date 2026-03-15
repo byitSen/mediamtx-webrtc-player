@@ -346,6 +346,30 @@ main {
   color: #6b7280;
 }
 
+.window-size-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 4px;
+  margin-bottom: 6px;
+}
+
+.window-size-row input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  accent-color: #2563eb;
+}
+
+.window-size-row input[type="number"] {
+  width: 72px;
+  flex-shrink: 0;
+}
+
+.window-size-row .hint {
+  margin-top: 0;
+  flex-shrink: 0;
+}
+
 .save-dir-path[title="点击选择目录"]:hover {
   color: #2563eb;
   text-decoration: underline;

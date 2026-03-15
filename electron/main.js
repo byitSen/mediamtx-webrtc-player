@@ -141,3 +141,16 @@ ipcMain.handle("save-screenshot", async (_, { baseDir, relativePath, base64Png }
     return { err: e.message };
   }
 });
+
+const WINDOW_WIDTH_MIN = 520;
+const WINDOW_WIDTH_MAX = 3840;
+const WINDOW_HEIGHT_MIN = 420;
+const WINDOW_HEIGHT_MAX = 2160;
+
+ipcMain.handle("set-window-size", (_, width, height) => {
+  const w = Math.max(WINDOW_WIDTH_MIN, Math.min(WINDOW_WIDTH_MAX, parseInt(width, 10) || 1020));
+  const h = Math.max(WINDOW_HEIGHT_MIN, Math.min(WINDOW_HEIGHT_MAX, parseInt(height, 10) || 820));
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.setSize(w, h);
+  }
+});

@@ -56,6 +56,30 @@
             <button type="button" id="settingAddCamera" class="btn secondary btn-sm">添加一路</button>
           </fieldset>
 
+          <fieldset class="settings-section" id="settingWindowSizeSection">
+            <legend>主窗口大小（桌面版）</legend>
+            <label>分辨率预设</label>
+            <select id="settingWindowPreset">
+              <option value="1020x820" selected>1020×820（默认）</option>
+              <option value="1024x768">1024×768</option>
+              <option value="1280x720">1280×720</option>
+              <option value="1920x1080">1920×1080</option>
+              <option value="2560x1440">2560×1440（2K）</option>
+              <option value="3840x2160">3840×2160（4K）</option>
+              <option value="custom">自定义</option>
+            </select>
+            <label>宽度</label>
+            <div class="window-size-row">
+              <input type="range" id="settingWindowWidthSlider" min="520" max="3840" step="10" aria-label="宽度" />
+              <input type="number" id="settingWindowWidth" min="520" max="3840" step="10" /> <span class="hint">px</span>
+            </div>
+            <label>高度</label>
+            <div class="window-size-row">
+              <input type="range" id="settingWindowHeightSlider" min="420" max="2160" step="10" aria-label="高度" />
+              <input type="number" id="settingWindowHeight" min="420" max="2160" step="10" /> <span class="hint">px</span>
+            </div>
+          </fieldset>
+
           <fieldset class="settings-section" id="settingScreenshotSection">
             <legend>截图保存（桌面版）</legend>
             <p id="settingSaveDirPath" class="hint save-dir-path" title="点击选择目录">未设置</p>

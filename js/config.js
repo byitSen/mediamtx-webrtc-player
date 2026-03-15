@@ -3,7 +3,7 @@ const STORAGE_KEY = "mediamtx-webrtc-player-settings";
 function getDefaultSettings() {
   return {
     webrtcBase: "http://localhost:8889",
-    gridColumns: 3,
+    gridColumns: 2,
     maxActiveConnections: 8,
     cameras: [{ name: "摄像头1", path: "cam1" }],
   };

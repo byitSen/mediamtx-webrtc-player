@@ -3,7 +3,7 @@ import { formatTimestamp, saveImageToPath } from "./utils.js";
 
 /**
  * 在 SDP offer 的 video 段注入 H.265，使 MediaMTX 认为客户端支持 H.265 并返回 H.265 流。
- * 仅在 Tauri 环境下使用（Windows WebView2 已通过 HevcVideoDecoder 启用解码，macOS WebKit 原生支持）。
+ * 桌面端 Electron 下可选（Chromium 已通过 HevcVideoDecoder 启用 H.265 解码）。
  * @param {string} sdp - 原始 SDP offer
  * @returns {string} 注入 H.265 后的 SDP，若已包含 H.265 或解析失败则返回原 SDP
  */
@@ -255,7 +255,6 @@ export class Player {
       // 不注入 H.265：Chromium 在 setLocalDescription/setRemoteDescription 时不接受与 offer 不一致的 H.265，会导致报错；仅用浏览器原生 offer，H.264 流可正常出画面，H.265 流会返回 400 并提示编码不支持
       const bodySdp = localSdp;
 
-      console.log(`[${this.camera.name || this.camera.path}] WHEP URL: ${url}`);
       let res;
       try {
         res = await fetch(url, {

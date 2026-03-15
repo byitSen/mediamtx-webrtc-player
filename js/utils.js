@@ -13,7 +13,7 @@ export function formatTimestamp(ts) {
   };
 }
 
-/** 从 data URL 中取出纯 base64 字符串（供 Tauri 写入文件用） */
+/** 从 data URL 中取出纯 base64 字符串（供 Electron 保存截图用） */
 export function dataUrlToBase64(dataUrl) {
   return dataUrl.replace(/^data:image\/\w+;base64,/, "");
 }

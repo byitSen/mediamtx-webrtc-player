@@ -69,7 +69,7 @@ function openSettings() {
 
   const cfg = getEffectiveSettings();
   const webrtcBase = cfg.webrtcBase || "http://localhost:8889";
-  const gridColumns = cfg.gridColumns || 3;
+  const gridColumns = cfg.gridColumns || 2;
   const maxActive = cfg.maxActiveConnections || 8;
   const cameras = cfg.cameras && cfg.cameras.length ? cfg.cameras : [{ name: "摄像头1", path: "cam1" }];
 
@@ -107,7 +107,7 @@ function saveSettingsFromForm() {
 
   const current = loadSettings();
   const webrtcBase = (settingWebrtcBase?.value || "").trim() || "http://localhost:8889";
-  const gridColumns = Math.max(1, Math.min(4, parseInt(settingGridColumns?.value || "3", 10) || 3));
+  const gridColumns = Math.max(1, Math.min(4, parseInt(settingGridColumns?.value || "2", 10) || 2));
   const maxActive = Math.max(1, Math.min(64, parseInt(settingMaxActive?.value || "8", 10) || 8));
 
   const next = { ...current, webrtcBase, cameras, gridColumns, maxActiveConnections: maxActive };
@@ -171,7 +171,7 @@ async function batchScreenshot() {
     }
   }
   if (success > 0) {
-    console.log(`已为 ${success} 路摄像头完成截图，统一时间戳: ${ts}`);
+    showToast(`已为 ${success} 路摄像头完成截图`);
   }
 }
 
@@ -242,7 +242,7 @@ function setupGlobalControls() {
 window.addEventListener("load", () => {
   setupGlobalControls();
   const cfg = getEffectiveSettings();
-  const gridCols = cfg.gridColumns || 3;
+  const gridCols = cfg.gridColumns || 2;
   const maxActive = cfg.maxActiveConnections || 8;
   setMaxActiveConnections(maxActive);
   applyGridColumns(playersGrid, gridCols);

@@ -8,6 +8,9 @@ function getDefaultSettings() {
     cameras: [{ name: "摄像头1", path: "cam1" }],
     windowWidth: 1020,
     windowHeight: 820,
+    fullscreenWidth: 1240,
+    fullscreenHeight: 800,
+    screenshotShortcut: "CommandOrControl+Shift+S",
   };
 }
 

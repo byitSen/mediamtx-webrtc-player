@@ -396,15 +396,106 @@ export class Player {
     }
   }
 
-  toggleFullscreenInApp() {
+  async toggleFullscreenInApp() {
     const card = this.containerEl;
     const isFull = card.classList.contains("fullscreen-mode");
+    const { video } = this.dom;
+    const api = typeof window !== "undefined" && window.electronAPI;
+
     if (isFull) {
       card.classList.remove("fullscreen-mode");
       document.body.style.overflow = "";
+      card.style.cursor = "";
+      if (this._fullscreenWheelHandler) {
+        card.removeEventListener("wheel", this._fullscreenWheelHandler, { passive: false });
+        this._fullscreenWheelHandler = null;
+      }
+      if (this._fullscreenDragHandlers) {
+        card.removeEventListener("mousedown", this._fullscreenDragHandlers.down);
+        document.removeEventListener("mousemove", this._fullscreenDragHandlers.move);
+        document.removeEventListener("mouseup", this._fullscreenDragHandlers.up);
+        document.removeEventListener("mouseleave", this._fullscreenDragHandlers.leave);
+        this._fullscreenDragHandlers = null;
+      }
+      if (video) video.style.transform = "";
+      this.fullscreenZoom = 1;
+      this.fullscreenPan = { x: 0, y: 0 };
+      if (api?.setWindowSize && this._savedWindowSize) {
+        const { width, height } = this._savedWindowSize;
+        api.setWindowSize(width, height);
+        this._savedWindowSize = null;
+      }
     } else {
+      if (api?.getWindowSize && api.setWindowSize) {
+        const size = await api.getWindowSize();
+        if (size) {
+          this._savedWindowSize = { width: size.width, height: size.height };
+          const cfg = getEffectiveSettings();
+          const fw = Math.max(520, Math.min(3840, cfg.fullscreenWidth ?? 1240));
+          const fh = Math.max(420, Math.min(2160, cfg.fullscreenHeight ?? 800));
+          api.setWindowSize(fw, fh);
+        }
+      }
+      this.fullscreenZoom = 1;
+      this.fullscreenPan = { x: 0, y: 0 };
+      this._fullscreenWheelHandler = (e) => this._onFullscreenWheel(e);
+      card.addEventListener("wheel", this._fullscreenWheelHandler, { passive: false });
+      this._fullscreenDragHandlers = {
+        down: (e) => this._onFullscreenDragStart(e),
+        move: (e) => this._onFullscreenDragMove(e),
+        up: () => this._onFullscreenDragEnd(),
+        leave: (e) => { if (e.target === document) this._onFullscreenDragEnd(); },
+      };
+      card.addEventListener("mousedown", this._fullscreenDragHandlers.down);
+      document.addEventListener("mousemove", this._fullscreenDragHandlers.move);
+      document.addEventListener("mouseup", this._fullscreenDragHandlers.up);
+      document.addEventListener("mouseleave", this._fullscreenDragHandlers.leave);
+      card.style.cursor = "grab";
+      this._applyFullscreenTransform();
       card.classList.add("fullscreen-mode");
       document.body.style.overflow = "hidden";
+    }
+  }
+
+  _applyFullscreenTransform() {
+    if (!this.dom.video) return;
+    const { x, y } = this.fullscreenPan || { x: 0, y: 0 };
+    this.dom.video.style.transform = `translate(${x}px, ${y}px) scale(${this.fullscreenZoom})`;
+  }
+
+  _onFullscreenWheel(e) {
+    if (!this.containerEl.classList.contains("fullscreen-mode")) return;
+    e.preventDefault();
+    const step = 0.12;
+    const next = this.fullscreenZoom + (e.deltaY > 0 ? -step : step);
+    this.fullscreenZoom = Math.max(0.5, Math.min(3, next));
+    this._applyFullscreenTransform();
+  }
+
+  _onFullscreenDragStart(e) {
+    if (!this.containerEl.classList.contains("fullscreen-mode") || e.button !== 0) return;
+    this._fullscreenDragging = true;
+    this._fullscreenDragStart = {
+      x: e.clientX,
+      y: e.clientY,
+      panX: this.fullscreenPan.x,
+      panY: this.fullscreenPan.y,
+    };
+    this.containerEl.style.cursor = "grabbing";
+  }
+
+  _onFullscreenDragMove(e) {
+    if (!this._fullscreenDragging || !this._fullscreenDragStart) return;
+    this.fullscreenPan.x = this._fullscreenDragStart.panX + (e.clientX - this._fullscreenDragStart.x);
+    this.fullscreenPan.y = this._fullscreenDragStart.panY + (e.clientY - this._fullscreenDragStart.y);
+    this._applyFullscreenTransform();
+  }
+
+  _onFullscreenDragEnd() {
+    this._fullscreenDragging = false;
+    this._fullscreenDragStart = null;
+    if (this.containerEl.classList.contains("fullscreen-mode")) {
+      this.containerEl.style.cursor = "grab";
     }
   }
 

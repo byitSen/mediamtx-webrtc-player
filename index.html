@@ -78,10 +78,23 @@
               <input type="range" id="settingWindowHeightSlider" min="420" max="2160" step="10" aria-label="高度" />
               <input type="number" id="settingWindowHeight" min="420" max="2160" step="10" /> <span class="hint">px</span>
             </div>
+            <label>全屏时主窗口尺寸（宽）</label>
+            <div class="window-size-row">
+              <input type="range" id="settingFullscreenWidthSlider" min="520" max="3840" step="10" aria-label="全屏宽度" />
+              <input type="number" id="settingFullscreenWidth" min="520" max="3840" step="10" placeholder="1240" /> <span class="hint">px</span>
+            </div>
+            <label>全屏时主窗口尺寸（高）</label>
+            <div class="window-size-row">
+              <input type="range" id="settingFullscreenHeightSlider" min="420" max="2160" step="10" aria-label="全屏高度" />
+              <input type="number" id="settingFullscreenHeight" min="420" max="2160" step="10" placeholder="800" /> <span class="hint">px</span>
+            </div>
           </fieldset>
 
           <fieldset class="settings-section" id="settingScreenshotSection">
             <legend>截图保存（桌面版）</legend>
+            <label>一键截图快捷键</label>
+            <input type="text" id="settingScreenshotShortcut" placeholder="CommandOrControl+Shift+S" maxlength="64" />
+            <span class="hint">如 CommandOrControl+Shift+S、Ctrl+Shift+S（留空则禁用快捷键）</span>
             <p id="settingSaveDirPath" class="hint save-dir-path" title="点击选择目录">未设置</p>
             <button type="button" id="chooseSaveDirBtn" class="btn secondary">选择保存目录</button>
           </fieldset>

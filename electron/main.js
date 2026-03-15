@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, dialog, session } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog, session, globalShortcut } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const http = require("http");
@@ -152,5 +152,50 @@ ipcMain.handle("set-window-size", (_, width, height) => {
   const h = Math.max(WINDOW_HEIGHT_MIN, Math.min(WINDOW_HEIGHT_MAX, parseInt(height, 10) || 820));
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.setSize(w, h);
+  }
+});
+
+ipcMain.handle("get-window-size", () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    const [w, h] = mainWindow.getSize();
+    return { width: w, height: h };
+  }
+  return null;
+});
+
+let currentScreenshotAccelerator = null;
+
+function normalizeAccelerator(acc) {
+  if (!acc || typeof acc !== "string") return "";
+  return acc
+    .trim()
+    .replace(/\bCtrl\b/gi, "Control")
+    .replace(/\bCmd\b/gi, "Command");
+}
+
+ipcMain.handle("register-screenshot-shortcut", (_, accelerator) => {
+  if (currentScreenshotAccelerator) {
+    try {
+      globalShortcut.unregister(currentScreenshotAccelerator);
+    } catch (_) {}
+    currentScreenshotAccelerator = null;
+  }
+  const acc = normalizeAccelerator(accelerator);
+  if (!acc) return;
+  try {
+    const ok = globalShortcut.register(acc, () => {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send("screenshot-trigger");
+      }
+    });
+    if (ok) currentScreenshotAccelerator = acc;
+  } catch (_) {}
+});
+
+app.on("will-quit", () => {
+  if (currentScreenshotAccelerator) {
+    try {
+      globalShortcut.unregister(currentScreenshotAccelerator);
+    } catch (_) {}
   }
 });

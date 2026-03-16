@@ -53,9 +53,9 @@ function createStaticServer() {
         res.end(data);
       });
     });
-    server.listen(0, "127.0.0.1", () => {
-      const port = server.address().port;
-      resolve({ server, url: `http://127.0.0.1:${port}/` });
+    const FIXED_PORT = 29173;
+    server.listen(FIXED_PORT, "127.0.0.1", () => {
+      resolve({ server, url: `http://127.0.0.1:${FIXED_PORT}/` });
     });
   });
 }

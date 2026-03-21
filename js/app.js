@@ -7,6 +7,17 @@ const SCREENSHOT_INTERVAL_MS = 200;
 const DESKTOP_SAVE_DIR_KEY = "desktop_screenshot_dir";
 const TOAST_DURATION_MS = 2500;
 
+let batchScreenshotInProgress = false;
+
+function setBatchScreenshotBusy(busy) {
+  batchScreenshotInProgress = busy;
+  if (batchScreenshotBtn) {
+    batchScreenshotBtn.disabled = busy;
+    batchScreenshotBtn.setAttribute("aria-busy", busy ? "true" : "false");
+    batchScreenshotBtn.title = busy ? "截图进行中，请稍候…" : "";
+  }
+}
+
 function showToast(message) {
   const el = document.createElement("div");
   el.className = "toast-message";
@@ -189,7 +200,7 @@ function saveSettingsFromForm() {
 async function batchScreenshot() {
   const players = getPlayerInstances();
   if (!players.length) return;
-  const ts = Date.now();
+  if (batchScreenshotInProgress) return;
 
   if (isElectronEnv()) {
     let baseDir = localStorage.getItem(DESKTOP_SAVE_DIR_KEY);
@@ -198,20 +209,48 @@ async function batchScreenshot() {
       if (baseDir) localStorage.setItem(DESKTOP_SAVE_DIR_KEY, baseDir);
     }
     if (!baseDir) return;
+  }
+
+  setBatchScreenshotBusy(true);
+  const ts = Date.now();
+
+  try {
+    if (isElectronEnv()) {
+      const baseDir = localStorage.getItem(DESKTOP_SAVE_DIR_KEY);
+      let success = 0;
+      for (const p of players) {
+        if (p.isConnected) {
+          try {
+            const result = await p.singleScreenshot(ts);
+            if (result?.relativePath && result?.dataUrl) {
+              const base64Png = dataUrlToBase64(result.dataUrl);
+              const res = await window.electronAPI.saveScreenshot({
+                baseDir,
+                relativePath: result.relativePath,
+                base64Png,
+              });
+              if (res?.ok) success += 1;
+            }
+            await new Promise((r) => setTimeout(r, SCREENSHOT_INTERVAL_MS));
+          } catch (e) {
+            console.error("batch screenshot error", e);
+          }
+        }
+      }
+      if (success > 0) {
+        showToast(`已保存 ${success} 张截图到所选目录`);
+        updateSaveDirDisplay();
+        await new Promise((r) => setTimeout(r, TOAST_DURATION_MS));
+      }
+      return;
+    }
+
     let success = 0;
     for (const p of players) {
       if (p.isConnected) {
         try {
-          const result = await p.singleScreenshot(ts);
-          if (result?.relativePath && result?.dataUrl) {
-            const base64Png = dataUrlToBase64(result.dataUrl);
-            const res = await window.electronAPI.saveScreenshot({
-              baseDir,
-              relativePath: result.relativePath,
-              base64Png,
-            });
-            if (res?.ok) success += 1;
-          }
+          await p.singleScreenshot(ts);
+          success += 1;
           await new Promise((r) => setTimeout(r, SCREENSHOT_INTERVAL_MS));
         } catch (e) {
           console.error("batch screenshot error", e);
@@ -219,26 +258,11 @@ async function batchScreenshot() {
       }
     }
     if (success > 0) {
-      showToast(`已保存 ${success} 张截图到所选目录`);
-      updateSaveDirDisplay();
+      showToast(`已为 ${success} 路摄像头完成截图`);
+      await new Promise((r) => setTimeout(r, TOAST_DURATION_MS));
     }
-    return;
-  }
-
-  let success = 0;
-  for (const p of players) {
-    if (p.isConnected) {
-      try {
-        await p.singleScreenshot(ts);
-        success += 1;
-        await new Promise((r) => setTimeout(r, SCREENSHOT_INTERVAL_MS));
-      } catch (e) {
-        console.error("batch screenshot error", e);
-      }
-    }
-  }
-  if (success > 0) {
-    showToast(`已为 ${success} 路摄像头完成截图`);
+  } finally {
+    setBatchScreenshotBusy(false);
   }
 }
 

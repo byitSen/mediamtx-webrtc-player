@@ -54,46 +54,36 @@ hlsPartDuration: 200ms
 ###############################################
 paths:
   # 内部路径：仅拉取摄像头 H.265 源（TCP 拉流减少丢包，避免 invalid fragmentation unit）
-  cam1_raw:
+  cam1:
     source: rtsp://admin:wcyj123456@192.168.1.3:554/cam/realmonitor?channel=1&subtype=0
     rtspTransport: tcp
     sourceOnDemand: true
     sourceOnDemandStartTimeout: 10s
     sourceOnDemandCloseAfter: 10s
-  # 对外路径：有读者时启动 FFmpeg 从 cam1_raw 取流，自动硬解 H.265 转 H.264 后发布到 cam1
-  cam1:
-    runOnDemand: ffmpeg -hwaccel auto -rtsp_transport tcp -i rtsp://localhost:$RTSP_PORT/cam1_raw -map 0:v:0 -c:v libx264 -pix_fmt yuv420p -preset ultrafast -b:v 600k -max_muxing_queue_size 1024 -f rtsp rtsp://localhost:$RTSP_PORT/$MTX_PATH
-    # runOnDemand: ffmpeg -rtsp_transport tcp -i rtsp://localhost:$RTSP_PORT/cam1_raw -map 0:v:0 -c:v libx264 -pix_fmt yuv420p -preset ultrafast -b:v 600k -max_muxing_queue_size 1024 -f rtsp rtsp://localhost:$RTSP_PORT/$MTX_PATH
-    runOnDemandRestart: true
-    runOnDemandStartTimeout: 15s
+
     runOnDemandCloseAfter: 10s
     # 内部路径：仅拉取摄像头 H.265 源（TCP 拉流减少丢包，避免 invalid fragmentation unit）
-  cam2_raw:
+  cam2:
     source: rtsp://admin:wcyj123456@192.168.1.3:554/cam/realmonitor?channel=8&subtype=0
     rtspTransport: tcp
     sourceOnDemand: true
     sourceOnDemandStartTimeout: 10s
     sourceOnDemandCloseAfter: 10s
-  # 对外路径：有读者时启动 FFmpeg 从 cam2_raw 取流，自动硬解 H.265 转 H.264 后发布到 cam2
-  cam2:
-    runOnDemand: ffmpeg -hwaccel auto -rtsp_transport tcp -i rtsp://localhost:$RTSP_PORT/cam2_raw -map 0:v:0 -c:v libx264 -pix_fmt yuv420p -preset ultrafast -b:v 600k -max_muxing_queue_size 1024 -f rtsp rtsp://localhost:$RTSP_PORT/$MTX_PATH
-    # runOnDemand: ffmpeg -rtsp_transport tcp -i rtsp://localhost:$RTSP_PORT/cam2_raw -map 0:v:0 -c:v libx264 -pix_fmt yuv420p -preset ultrafast -b:v 600k -max_muxing_queue_size 1024 -f rtsp rtsp://localhost:$RTSP_PORT/$MTX_PATH
-    runOnDemandRestart: true
-    runOnDemandStartTimeout: 15s
-    runOnDemandCloseAfter: 10s
-  cam3_raw:
+
+  cam3:
     source: rtsp://admin:wcyj123456@192.168.1.3:554/cam/realmonitor?channel=16&subtype=0
     rtspTransport: tcp
     sourceOnDemand: true
     sourceOnDemandStartTimeout: 10s
     sourceOnDemandCloseAfter: 10s
-  # 对外路径：有读者时启动 FFmpeg 从 cam3_raw 取流，自动硬解 H.265 转 H.264 后发布到 cam3
-  cam3:
-    runOnDemand: ffmpeg -hwaccel auto -rtsp_transport tcp -i rtsp://localhost:$RTSP_PORT/cam3_raw -map 0:v:0 -c:v libx264 -pix_fmt yuv420p -preset ultrafast -b:v 600k -max_muxing_queue_size 1024 -f rtsp rtsp://localhost:$RTSP_PORT/$MTX_PATH
-    # runOnDemand: ffmpeg -rtsp_transport tcp -i rtsp://localhost:$RTSP_PORT/cam3_raw -map 0:v:0 -c:v libx264 -pix_fmt yuv420p -preset ultrafast -b:v 600k -max_muxing_queue_size 1024 -f rtsp rtsp://localhost:$RTSP_PORT/$MTX_PATH
-    runOnDemandRestart: true
-    runOnDemandStartTimeout: 15s
-    runOnDemandCloseAfter: 10s
+
+  cam4:
+    source: rtsp://admin:wcyj123456@192.168.1.3:554/cam/realmonitor?channel=7&subtype=0
+    rtspTransport: tcp
+    sourceOnDemand: true
+    sourceOnDemandStartTimeout: 10s
+    sourceOnDemandCloseAfter: 10s
+
 
 ###############################################
 # 路径默认（未在 paths 中声明的路径均使用此配置）

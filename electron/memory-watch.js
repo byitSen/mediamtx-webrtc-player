@@ -1,6 +1,6 @@
 /**
- * Windows 进程内存监视：按 64 位指针链轮询，最终 int32 边沿变为 0 时触发回调。
- * 非 win32 平台为空操作。
+ * Windows 进程内存监视：按指针链轮询，最终 int32 边沿变为 0 时触发回调。
+ * 自动识别目标进程 32/64 位并选用对应指针宽度。
  *
  * 指针链（Cheat Engine）：
  *   p = *(moduleBase + moduleOffset)
@@ -12,10 +12,15 @@ const POLL_INTERVAL_MS = 100;
 const STATUS_LOG_INTERVAL_MS = 1000;
 
 const TH32CS_SNAPPROCESS = 0x00000002;
+const TH32CS_SNAPMODULE = 0x00000008;
+const TH32CS_SNAPMODULE32 = 0x00000010;
 const PROCESS_VM_READ = 0x0010;
 const PROCESS_QUERY_INFORMATION = 0x0400;
+const LIST_MODULES_32BIT = 0x01;
+const LIST_MODULES_64BIT = 0x02;
 const LIST_MODULES_ALL = 0x03;
 const MAX_PATH = 260;
+const MAX_MODULE_NAME32 = 255;
 
 let timer = null;
 let armed = true;
@@ -29,8 +34,12 @@ let lastStatusLogAt = 0;
 
 function hexAddr(n) {
   if (n == null) return "null";
-  const b = typeof n === "bigint" ? n : BigInt(n);
-  return "0x" + b.toString(16).toUpperCase();
+  try {
+    const b = typeof n === "bigint" ? n : BigInt(n);
+    return "0x" + b.toString(16).toUpperCase();
+  } catch {
+    return String(n);
+  }
 }
 
 function hexOff(n) {
@@ -49,7 +58,6 @@ function emitLog(level, message, detail) {
   } catch (_) {}
 }
 
-/** 状态类日志：相同状态节流；状态变化立即输出 */
 function emitStatus(level, key, message, detail) {
   const now = Date.now();
   if (key === lastStatusKey && now - lastStatusLogAt < STATUS_LOG_INTERVAL_MS) return;
@@ -105,18 +113,37 @@ function loadWinApi() {
       szExeFile: koffi.array("char16", MAX_PATH),
     });
 
+    // MODULEENTRY32W：用 uintptr 存 modBaseAddr，避免 void* 编解码问题
+    const MODULEENTRY32W = koffi.struct("MODULEENTRY32W", {
+      dwSize: "uint32",
+      th32ModuleID: "uint32",
+      th32ProcessID: "uint32",
+      GlblcntUsage: "uint32",
+      ProccntUsage: "uint32",
+      modBaseAddr: "uintptr",
+      modBaseSize: "uint32",
+      hModule: "uintptr",
+      szModule: koffi.array("char16", MAX_MODULE_NAME32 + 1),
+      szExePath: koffi.array("char16", MAX_PATH),
+    });
+
     const kernel32 = koffi.load("kernel32.dll");
     const psapi = koffi.load("psapi.dll");
 
     winApi = {
       koffi,
       PROCESSENTRY32W,
+      MODULEENTRY32W,
       entrySize: koffi.sizeof(PROCESSENTRY32W),
+      moduleEntrySize: koffi.sizeof(MODULEENTRY32W),
       CreateToolhelp32Snapshot: kernel32.func("CreateToolhelp32Snapshot", "void *", ["uint32", "uint32"]),
       Process32FirstW: kernel32.func("Process32FirstW", "bool", ["void *", koffi.inout(koffi.pointer(PROCESSENTRY32W))]),
       Process32NextW: kernel32.func("Process32NextW", "bool", ["void *", koffi.inout(koffi.pointer(PROCESSENTRY32W))]),
+      Module32FirstW: kernel32.func("Module32FirstW", "bool", ["void *", koffi.inout(koffi.pointer(MODULEENTRY32W))]),
+      Module32NextW: kernel32.func("Module32NextW", "bool", ["void *", koffi.inout(koffi.pointer(MODULEENTRY32W))]),
       OpenProcess: kernel32.func("OpenProcess", "void *", ["uint32", "bool", "uint32"]),
       CloseHandle: kernel32.func("CloseHandle", "bool", ["void *"]),
+      IsWow64Process: kernel32.func("IsWow64Process", "bool", ["void *", koffi.out("bool *")]),
       ReadProcessMemory: kernel32.func("ReadProcessMemory", "bool", [
         "void *",
         "void *",
@@ -131,6 +158,7 @@ function loadWinApi() {
         koffi.out("uint32 *"),
         "uint32",
       ]),
+      GetModuleBaseNameW: psapi.func("GetModuleBaseNameW", "uint32", ["void *", "void *", "void *", "uint32"]),
       isNullHandle(h) {
         if (h == null || h === 0 || h === 0n) return true;
         try {
@@ -139,9 +167,6 @@ function loadWinApi() {
         } catch {
           return true;
         }
-      },
-      handleAddress(h) {
-        return typeof h === "bigint" ? h : BigInt(koffi.address(h));
       },
     };
     return winApi;
@@ -183,21 +208,103 @@ function findPidByName(api, processName) {
   }
 }
 
-function getMainModuleBase(api, hProcess) {
-  // HMODULE 即为模块加载基址，无需再调 GetModuleInformation（避免 koffi.as(BigInt) 抛 Invalid argument）
-  const cb = 8;
-  const buf = Buffer.alloc(cb);
-  const needed = [0];
-  if (!api.EnumProcessModulesEx(hProcess, buf, cb, needed, LIST_MODULES_ALL)) {
-    return { ok: false, error: "EnumProcessModulesEx failed (可能权限不足)" };
-  }
-  if ((needed[0] | 0) < 8) return { ok: false, error: "no modules returned" };
-  const base = buf.readBigUInt64LE(0);
-  if (base === 0n) return { ok: false, error: "null HMODULE" };
-  return { ok: true, base };
+/** 64 位本机上：Wow64=true 表示目标是 32 位进程 */
+function detectPtrSize(api, hProcess) {
+  const flag = [false];
+  try {
+    if (api.IsWow64Process(hProcess, flag)) {
+      if (flag[0]) return 4;
+      // 本进程若是 32 位则目标也是 32 位；Electron 正式包为 64 位
+      if (process.arch === "ia32") return 4;
+      return 8;
+    }
+  } catch (_) {}
+  return 8;
 }
 
-/** 将地址转为 koffi void*（koffi.as 不接受 BigInt，用户态地址在 Number 安全范围内） */
+function readModuleBaseName(api, hProcess, hModule) {
+  const buf = Buffer.alloc((MAX_PATH + 1) * 2);
+  let modPtr;
+  try {
+    modPtr = toVoidPtr(api, hModule);
+  } catch {
+    return "";
+  }
+  if (!modPtr) return "";
+  const n = api.GetModuleBaseNameW(hProcess, modPtr, buf, MAX_PATH);
+  if (!n) return "";
+  return buf.toString("utf16le", 0, n * 2).replace(/\0+$/, "");
+}
+
+/**
+ * 优先用 Module32 按进程名匹配主模块基址（避免 EnumProcessModules 首项不是 exe）。
+ */
+function getMainModuleBase(api, hProcess, pid, processName) {
+  const target = String(processName || "").toLowerCase();
+  const flags = TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32;
+  const snap = api.CreateToolhelp32Snapshot(flags, pid >>> 0);
+  if (!api.isNullHandle(snap)) {
+    try {
+      const entry = {
+        dwSize: api.moduleEntrySize,
+        th32ModuleID: 0,
+        th32ProcessID: 0,
+        GlblcntUsage: 0,
+        ProccntUsage: 0,
+        modBaseAddr: 0,
+        modBaseSize: 0,
+        hModule: 0,
+        szModule: "",
+        szExePath: "",
+      };
+      if (api.Module32FirstW(snap, entry)) {
+        do {
+          const name = String(entry.szModule || "").toLowerCase();
+          const base =
+            typeof entry.modBaseAddr === "bigint"
+              ? entry.modBaseAddr
+              : BigInt(entry.modBaseAddr >>> 0 || entry.modBaseAddr || 0);
+          if (name === target && base !== 0n) {
+            return { ok: true, base, moduleName: name, via: "Module32" };
+          }
+          entry.dwSize = api.moduleEntrySize;
+        } while (api.Module32NextW(snap, entry));
+      }
+    } finally {
+      api.CloseHandle(snap);
+    }
+  }
+
+  // 回退：EnumProcessModulesEx，按模块名匹配；找不到则用第一项
+  for (const listFlag of [LIST_MODULES_ALL, LIST_MODULES_32BIT, LIST_MODULES_64BIT]) {
+    const needed = [0];
+    const probe = Buffer.alloc(8);
+    if (!api.EnumProcessModulesEx(hProcess, probe, 8, needed, listFlag)) continue;
+    const bytes = needed[0] | 0;
+    if (bytes < 8) continue;
+    const count = Math.floor(bytes / 8);
+    const buf = Buffer.alloc(Math.max(bytes, 8));
+    if (!api.EnumProcessModulesEx(hProcess, buf, buf.length, needed, listFlag)) continue;
+
+    let first = null;
+    for (let i = 0; i < count; i++) {
+      const hMod = buf.readBigUInt64LE(i * 8);
+      if (hMod === 0n) continue;
+      if (first == null) first = hMod;
+      const name = readModuleBaseName(api, hProcess, hMod).toLowerCase();
+      if (name && name === target) {
+        return { ok: true, base: hMod, moduleName: name, via: "EnumProcessModulesEx" };
+      }
+    }
+    if (first != null) {
+      const name = readModuleBaseName(api, hProcess, first) || "(first)";
+      return { ok: true, base: first, moduleName: name, via: "EnumProcessModulesEx/first" };
+    }
+  }
+
+  return { ok: false, error: "无法获取主模块基址（Module32/EnumProcessModules 均失败）" };
+}
+
 function toVoidPtr(api, address) {
   if (address == null) return null;
   if (typeof address === "bigint") {
@@ -218,7 +325,7 @@ function readBytes(api, hProcess, address, size) {
   let addrPtr;
   try {
     addrPtr = toVoidPtr(api, address);
-  } catch (e) {
+  } catch {
     return null;
   }
   if (!addrPtr) return null;
@@ -229,9 +336,10 @@ function readBytes(api, hProcess, address, size) {
   return buf;
 }
 
-function readU64(api, hProcess, address) {
-  const buf = readBytes(api, hProcess, address, 8);
+function readPointer(api, hProcess, address, ptrSize) {
+  const buf = readBytes(api, hProcess, address, ptrSize);
   if (!buf) return null;
+  if (ptrSize === 4) return BigInt(buf.readUInt32LE(0));
   return buf.readBigUInt64LE(0);
 }
 
@@ -241,35 +349,38 @@ function readI32(api, hProcess, address) {
   return buf.readInt32LE(0);
 }
 
-function resolveChainValue(api, hProcess, moduleBase, moduleOffset, offsets) {
+function resolveChainValue(api, hProcess, moduleBase, moduleOffset, offsets, ptrSize) {
   if (!offsets.length) return { ok: false, error: "empty offsets" };
 
   const staticAddr = moduleBase + BigInt(moduleOffset >>> 0);
-  let ptr = readU64(api, hProcess, staticAddr);
+  let ptr = readPointer(api, hProcess, staticAddr, ptrSize);
   if (ptr == null || ptr === 0n) {
     return {
       ok: false,
-      error: `read static base failed @ ${hexAddr(staticAddr)} (module+${hexOff(moduleOffset)})`,
+      error: `read static base failed @ ${hexAddr(staticAddr)} = module ${hexAddr(moduleBase)} + ${hexOff(moduleOffset)} (ptr${ptrSize})`,
       step: 0,
       staticAddr,
+      moduleBase,
+      ptrSize,
     };
   }
 
-  const steps = [{ addr: staticAddr, ptr }];
+  const steps = [{ addr: hexAddr(staticAddr), ptr: hexAddr(ptr) }];
   for (let i = 0; i < offsets.length - 1; i++) {
     const addr = ptr + BigInt(offsets[i] >>> 0);
-    const next = readU64(api, hProcess, addr);
+    const next = readPointer(api, hProcess, addr, ptrSize);
     if (next == null || next === 0n) {
       return {
         ok: false,
-        error: `pointer chain break at offset[${i}]=${hexOff(offsets[i])} @ ${hexAddr(addr)}`,
+        error: `pointer chain break at offset[${i}]=${hexOff(offsets[i])} @ ${hexAddr(addr)} (ptr${ptrSize})`,
         step: i + 1,
         steps,
         failAddr: addr,
+        ptrSize,
       };
     }
     ptr = next;
-    steps.push({ addr, ptr });
+    steps.push({ addr: hexAddr(addr), ptr: hexAddr(ptr) });
   }
 
   const lastOff = offsets[offsets.length - 1] >>> 0;
@@ -282,9 +393,10 @@ function resolveChainValue(api, hProcess, moduleBase, moduleOffset, offsets) {
       step: offsets.length,
       steps,
       finalAddr,
+      ptrSize,
     };
   }
-  return { ok: true, value, finalAddr, moduleBase, staticAddr, steps };
+  return { ok: true, value, finalAddr, moduleBase, staticAddr, steps, ptrSize };
 }
 
 function pollOnce() {
@@ -292,7 +404,10 @@ function pollOnce() {
     pollOnceInner();
   } catch (e) {
     emitStatus("error", `ex:${e.message}`, `轮询异常: ${e.message}`, {
-      stack: String(e.stack || "").split("\n").slice(0, 3).join(" | "),
+      stack: String(e.stack || "")
+        .split("\n")
+        .slice(0, 3)
+        .join(" | "),
     });
   }
 }
@@ -320,24 +435,47 @@ function pollOnceInner() {
   }
 
   try {
-    const mod = getMainModuleBase(api, hProcess);
+    const ptrSize = detectPtrSize(api, hProcess);
+    const mod = getMainModuleBase(api, hProcess, found.pid, currentConfig.processName);
     if (!mod.ok) {
       emitStatus("error", `mod:${found.pid}`, `获取模块基址失败: ${mod.error}`, { pid: found.pid });
       return;
     }
 
-    const result = resolveChainValue(
+    const staticAddr = mod.base + BigInt(currentConfig.moduleOffset >>> 0);
+    let result = resolveChainValue(
       api,
       hProcess,
       mod.base,
       currentConfig.moduleOffset,
-      currentConfig.offsets
+      currentConfig.offsets,
+      ptrSize
     );
+
+    // 若按检测位宽失败，再试另一种指针宽度（兼容误判）
+    if (!result.ok) {
+      const alt = ptrSize === 8 ? 4 : 8;
+      const retry = resolveChainValue(
+        api,
+        hProcess,
+        mod.base,
+        currentConfig.moduleOffset,
+        currentConfig.offsets,
+        alt
+      );
+      if (retry.ok) result = retry;
+    }
+
     if (!result.ok) {
       emitStatus("warn", `chain:${result.error}`, `指针链读取失败: ${result.error}`, {
         pid: found.pid,
         moduleBase: hexAddr(mod.base),
+        moduleName: mod.moduleName,
+        moduleVia: mod.via,
+        staticAddr: hexAddr(staticAddr),
+        expectHint: "若 CE 绝对地址为 0xDB27E0，则基址应为 static-0x9B27E0",
         step: result.step,
+        ptrSize: result.ptrSize,
       });
       return;
     }
@@ -345,14 +483,16 @@ function pollOnceInner() {
     const value = result.value;
     emitStatus(
       "ok",
-      `ok:${found.pid}:${value}:${armed ? 1 : 0}`,
-      `监听成功 value=${value} armed=${armed ? "yes" : "no"} final=${hexAddr(result.finalAddr)}`,
+      `ok:${found.pid}:${value}:${armed ? 1 : 0}:${result.ptrSize}`,
+      `监听成功 value=${value} armed=${armed ? "yes" : "no"} ptr${result.ptrSize} final=${hexAddr(result.finalAddr)}`,
       {
         pid: found.pid,
         processName: currentConfig.processName,
+        moduleName: mod.moduleName,
         moduleBase: hexAddr(mod.base),
         staticAddr: hexAddr(result.staticAddr),
         finalAddr: hexAddr(result.finalAddr),
+        ptrSize: result.ptrSize,
         value,
         armed,
       }
@@ -417,11 +557,15 @@ function startMemoryWatch(config, triggerCb, logCb) {
   currentConfig = normalized;
   armed = true;
   timer = setInterval(pollOnce, POLL_INTERVAL_MS);
-  emitLog("info", `内存监控已启动 process=${normalized.processName} static=${hexOff(normalized.moduleOffset)} offsets=[${normalized.offsets.map(hexOff).join(", ")}]`, {
-    processName: normalized.processName,
-    moduleOffset: hexOff(normalized.moduleOffset),
-    offsets: normalized.offsets.map(hexOff),
-  });
+  emitLog(
+    "info",
+    `内存监控已启动 process=${normalized.processName} static=${hexOff(normalized.moduleOffset)} offsets=[${normalized.offsets.map(hexOff).join(", ")}]`,
+    {
+      processName: normalized.processName,
+      moduleOffset: hexOff(normalized.moduleOffset),
+      offsets: normalized.offsets.map(hexOff),
+    }
+  );
   return { ok: true };
 }
 

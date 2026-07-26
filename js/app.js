@@ -56,7 +56,15 @@ const settingFullscreenHeight = document.getElementById("settingFullscreenHeight
 const settingFullscreenWidthSlider = document.getElementById("settingFullscreenWidthSlider");
 const settingFullscreenHeightSlider = document.getElementById("settingFullscreenHeightSlider");
 const settingScreenshotShortcut = document.getElementById("settingScreenshotShortcut");
+const settingMemoryWatchSection = document.getElementById("settingMemoryWatchSection");
+const settingMemoryWatchEnabled = document.getElementById("settingMemoryWatchEnabled");
+const settingMemoryWatchProcessName = document.getElementById("settingMemoryWatchProcessName");
+const settingMemoryWatchModuleOffset = document.getElementById("settingMemoryWatchModuleOffset");
+const settingMemoryWatchOffsetsList = document.getElementById("settingMemoryWatchOffsetsList");
+const settingAddMemoryOffset = document.getElementById("settingAddMemoryOffset");
+const settingMemoryWatchHint = document.getElementById("settingMemoryWatchHint");
 
+const DEFAULT_MEMORY_OFFSETS = ["0x5EC", "0x310", "0x504", "0x94", "0x4DC"];
 const WINDOW_WIDTH_MIN = 520;
 const WINDOW_WIDTH_MAX = 3840;
 const WINDOW_HEIGHT_MIN = 420;
@@ -88,6 +96,75 @@ function renderCameraRow(name = "", path = "", index = 0) {
   row.appendChild(pathInput);
   row.appendChild(removeBtn);
   settingCamerasList.appendChild(row);
+}
+
+function renderOffsetRow(value = "") {
+  if (!settingMemoryWatchOffsetsList) return;
+  const row = document.createElement("div");
+  row.className = "offset-row";
+
+  const offsetInput = document.createElement("input");
+  offsetInput.type = "text";
+  offsetInput.placeholder = "0x0";
+  offsetInput.value = value;
+  offsetInput.maxLength = 32;
+
+  const removeBtn = document.createElement("button");
+  removeBtn.type = "button";
+  removeBtn.className = "btn-remove";
+  removeBtn.textContent = "删除";
+  removeBtn.addEventListener("click", () => {
+    const rows = settingMemoryWatchOffsetsList.querySelectorAll(".offset-row");
+    if (rows.length <= 1) return;
+    row.remove();
+  });
+
+  row.appendChild(offsetInput);
+  row.appendChild(removeBtn);
+  settingMemoryWatchOffsetsList.appendChild(row);
+}
+
+function collectMemoryWatchOffsets() {
+  const offsets = [];
+  settingMemoryWatchOffsetsList?.querySelectorAll(".offset-row input").forEach((input) => {
+    const v = (input.value || "").trim();
+    if (v) offsets.push(v);
+  });
+  return offsets.length ? offsets : [...DEFAULT_MEMORY_OFFSETS];
+}
+
+function buildMemoryWatchConfig(cfg) {
+  return {
+    enabled: !!cfg.memoryWatchEnabled,
+    processName: (cfg.memoryWatchProcessName || "").trim(),
+    moduleOffset: (cfg.memoryWatchModuleOffset || "").trim() || "0x0",
+    offsets: Array.isArray(cfg.memoryWatchOffsets) && cfg.memoryWatchOffsets.length
+      ? cfg.memoryWatchOffsets
+      : [...DEFAULT_MEMORY_OFFSETS],
+  };
+}
+
+function applyMemoryWatchConfig(cfg) {
+  if (!isElectronEnv() || !window.electronAPI.configureMemoryWatch) return;
+  window.electronAPI.configureMemoryWatch(buildMemoryWatchConfig(cfg));
+}
+
+function updateMemoryWatchSectionAvailability() {
+  if (!settingMemoryWatchSection) return;
+  const isDesktop = isElectronEnv();
+  const isWin = isDesktop && window.electronAPI.platform === "win32";
+  settingMemoryWatchSection.style.display = isDesktop ? "" : "none";
+  const controls = settingMemoryWatchSection.querySelectorAll("input, button");
+  controls.forEach((el) => {
+    el.disabled = !isWin;
+  });
+  if (settingMemoryWatchHint) {
+    settingMemoryWatchHint.textContent = isWin
+      ? "仅 Windows 桌面版有效；按 64 位指针解析；监控值变为 0 时截图一次，恢复非 0 后重新武装。"
+      : isDesktop
+        ? "当前系统非 Windows，内存监控不可用。"
+        : "仅 Windows 桌面版可用。";
+  }
 }
 
 function openSettings() {
@@ -126,9 +203,26 @@ function openSettings() {
   if (settingFullscreenHeightSlider) settingFullscreenHeightSlider.value = String(fsH);
   if (settingScreenshotShortcut) settingScreenshotShortcut.value = cfg.screenshotShortcut ?? "CommandOrControl+Shift+S";
 
+  if (settingMemoryWatchEnabled) settingMemoryWatchEnabled.checked = !!cfg.memoryWatchEnabled;
+  if (settingMemoryWatchProcessName) {
+    settingMemoryWatchProcessName.value = cfg.memoryWatchProcessName ?? "weight.exe";
+  }
+  if (settingMemoryWatchModuleOffset) {
+    settingMemoryWatchModuleOffset.value = cfg.memoryWatchModuleOffset ?? "0x9B27E0";
+  }
+  if (settingMemoryWatchOffsetsList) {
+    settingMemoryWatchOffsetsList.innerHTML = "";
+    const offsets =
+      Array.isArray(cfg.memoryWatchOffsets) && cfg.memoryWatchOffsets.length
+        ? cfg.memoryWatchOffsets
+        : DEFAULT_MEMORY_OFFSETS;
+    offsets.forEach((off) => renderOffsetRow(off));
+  }
+
   if (settingWindowSizeSection) {
     settingWindowSizeSection.style.display = isElectronEnv() ? "" : "none";
   }
+  updateMemoryWatchSectionAvailability();
 
   updateSaveDirDisplay();
 }
@@ -163,6 +257,10 @@ function addCameraRow() {
   renderCameraRow("", "", list.length);
 }
 
+function addMemoryOffsetRow() {
+  renderOffsetRow("");
+}
+
 function saveSettingsFromForm() {
   const cameras = [];
   settingCamerasList?.querySelectorAll(".camera-row").forEach((row) => {
@@ -182,13 +280,33 @@ function saveSettingsFromForm() {
   const fullscreenWidth = Math.max(WINDOW_WIDTH_MIN, Math.min(WINDOW_WIDTH_MAX, parseInt(settingFullscreenWidth?.value || "1240", 10) || 1240));
   const fullscreenHeight = Math.max(WINDOW_HEIGHT_MIN, Math.min(WINDOW_HEIGHT_MAX, parseInt(settingFullscreenHeight?.value || "800", 10) || 800));
   const screenshotShortcut = (settingScreenshotShortcut?.value || "").trim();
+  const memoryWatchEnabled = !!settingMemoryWatchEnabled?.checked;
+  const memoryWatchProcessName = (settingMemoryWatchProcessName?.value || "").trim() || "weight.exe";
+  const memoryWatchModuleOffset = (settingMemoryWatchModuleOffset?.value || "").trim() || "0x9B27E0";
+  const memoryWatchOffsets = collectMemoryWatchOffsets();
 
-  const next = { ...current, webrtcBase, cameras, gridColumns, maxActiveConnections: maxActive, windowWidth, windowHeight, fullscreenWidth, fullscreenHeight, screenshotShortcut: screenshotShortcut || undefined };
+  const next = {
+    ...current,
+    webrtcBase,
+    cameras,
+    gridColumns,
+    maxActiveConnections: maxActive,
+    windowWidth,
+    windowHeight,
+    fullscreenWidth,
+    fullscreenHeight,
+    screenshotShortcut: screenshotShortcut || undefined,
+    memoryWatchEnabled,
+    memoryWatchProcessName,
+    memoryWatchModuleOffset,
+    memoryWatchOffsets,
+  };
   saveSettings(next);
 
   if (isElectronEnv()) {
     if (window.electronAPI.setWindowSize) window.electronAPI.setWindowSize(windowWidth, windowHeight);
     if (window.electronAPI.registerScreenshotShortcut) window.electronAPI.registerScreenshotShortcut(screenshotShortcut || null);
+    applyMemoryWatchConfig(next);
   }
 
   setMaxActiveConnections(maxActive);
@@ -317,6 +435,7 @@ function setupGlobalControls() {
   if (settingsCancelBtn) settingsCancelBtn.addEventListener("click", closeSettings);
   if (settingsSaveBtn) settingsSaveBtn.addEventListener("click", saveSettingsFromForm);
   if (settingAddCamera) settingAddCamera.addEventListener("click", addCameraRow);
+  if (settingAddMemoryOffset) settingAddMemoryOffset.addEventListener("click", addMemoryOffsetRow);
 
   const chooseSaveDirBtn = document.getElementById("chooseSaveDirBtn");
   const settingSaveDirPath = document.getElementById("settingSaveDirPath");
@@ -387,6 +506,7 @@ function setupGlobalControls() {
   if (settingWindowSizeSection) {
     settingWindowSizeSection.style.display = isElectronEnv() ? "" : "none";
   }
+  updateMemoryWatchSectionAvailability();
 
   updateSaveDirDisplay();
 }
@@ -414,6 +534,7 @@ window.addEventListener("load", () => {
     if (window.electronAPI.registerScreenshotShortcut) {
       window.electronAPI.registerScreenshotShortcut(cfg.screenshotShortcut || null);
     }
+    applyMemoryWatchConfig(cfg);
     window.addEventListener("screenshot-trigger", () => batchScreenshot());
   }
 });

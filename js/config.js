@@ -11,6 +11,10 @@ function getDefaultSettings() {
     fullscreenWidth: 1240,
     fullscreenHeight: 800,
     screenshotShortcut: "CommandOrControl+Shift+S",
+    memoryWatchEnabled: false,
+    memoryWatchProcessName: "weight.exe",
+    memoryWatchModuleOffset: "0x9B27E0",
+    memoryWatchOffsets: ["0x5EC", "0x310", "0x504", "0x94", "0x4DC"],
   };
 }
 

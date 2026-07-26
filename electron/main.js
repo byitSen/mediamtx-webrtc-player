@@ -2,6 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, session, globalShortcut } = require
 const path = require("path");
 const fs = require("fs");
 const http = require("http");
+const { stopMemoryWatch, updateMemoryWatch } = require("./memory-watch");
 
 // Chromium 136+ WebRTC H.265：启用解码并在 SDP 中协商 H.265，便于直接播 H.265 源
 app.commandLine.appendSwitch("enable-features", "HevcVideoDecoder,WebRtcAllowH265Receive,WebRtcAllowH265Send");
@@ -90,12 +91,19 @@ function createWindow() {
   }
 
   mainWindow.on("closed", () => {
+    stopMemoryWatch();
     mainWindow = null;
     if (staticServer) {
       staticServer.close();
       staticServer = null;
     }
   });
+}
+
+function fireScreenshotTrigger() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("screenshot-trigger");
+  }
 }
 
 app.whenReady().then(() => {
@@ -184,15 +192,24 @@ ipcMain.handle("register-screenshot-shortcut", (_, accelerator) => {
   if (!acc) return;
   try {
     const ok = globalShortcut.register(acc, () => {
-      if (mainWindow && !mainWindow.isDestroyed()) {
-        mainWindow.webContents.send("screenshot-trigger");
-      }
+      fireScreenshotTrigger();
     });
     if (ok) currentScreenshotAccelerator = acc;
   } catch (_) {}
 });
 
+ipcMain.handle("configure-memory-watch", (_, config) => {
+  try {
+    return updateMemoryWatch(config, fireScreenshotTrigger);
+  } catch (e) {
+    console.warn("[memory-watch] configure failed:", e.message);
+    stopMemoryWatch();
+    return { ok: false, reason: e.message };
+  }
+});
+
 app.on("will-quit", () => {
+  stopMemoryWatch();
   if (currentScreenshotAccelerator) {
     try {
       globalShortcut.unregister(currentScreenshotAccelerator);

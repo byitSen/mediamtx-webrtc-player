@@ -281,37 +281,33 @@ let debugPrivTried = false;
 function enableSeDebugPrivilege(api) {
   if (debugPrivTried) return;
   debugPrivTried = true;
+  // 可选提权；失败不影响普通进程的 ReadProcessMemory（当前监听已可用）
   try {
     const nullPtr = api.koffi.as(0, "void *");
-    const tokenRef = [nullPtr];
-    if (!api.OpenProcessToken(api.GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, tokenRef)) {
-      emitLog("warn", "OpenProcessToken 失败，可能无法读取受保护进程", { lastError: api.GetLastError() });
+    const tokenOut = [null];
+    let ok = false;
+    try {
+      ok = !!api.OpenProcessToken(api.GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, tokenOut);
+    } catch {
       return;
     }
-    const hToken = tokenRef[0];
-    const luid = { LowPart: 0, HighPart: 0 };
-    if (!api.LookupPrivilegeValueW(nullPtr, "SeDebugPrivilege", luid)) {
-      api.CloseHandle(hToken);
-      emitLog("warn", "LookupPrivilegeValue(SeDebugPrivilege) 失败", { lastError: api.GetLastError() });
-      return;
+    if (!ok || !tokenOut[0]) return;
+    const hToken = tokenOut[0];
+    try {
+      const luid = { LowPart: 0, HighPart: 0 };
+      if (!api.LookupPrivilegeValueW(nullPtr, "SeDebugPrivilege", luid)) return;
+      const tp = {
+        PrivilegeCount: 1,
+        Privileges: [{ Luid: luid, Attributes: SE_PRIVILEGE_ENABLED }],
+      };
+      api.AdjustTokenPrivileges(hToken, false, tp, 0, nullPtr, nullPtr);
+    } finally {
+      try {
+        api.CloseHandle(hToken);
+      } catch (_) {}
     }
-    const tp = {
-      PrivilegeCount: 1,
-      Privileges: [{ Luid: luid, Attributes: SE_PRIVILEGE_ENABLED }],
-    };
-    api.AdjustTokenPrivileges(hToken, false, tp, 0, nullPtr, nullPtr);
-    const err = api.GetLastError() >>> 0;
-    api.CloseHandle(hToken);
-    // ERROR_SUCCESS=0；ERROR_NOT_ALL_ASSIGNED=1300
-    if (err === 1300) {
-      emitLog("warn", "SeDebugPrivilege 未全部生效(1300)，建议以管理员运行", { lastError: err });
-    } else if (err !== 0) {
-      emitLog("warn", `AdjustTokenPrivileges lastError=${err}`, { lastError: err });
-    } else {
-      emitLog("info", "已启用 SeDebugPrivilege");
-    }
-  } catch (e) {
-    emitLog("warn", `启用 SeDebugPrivilege 异常: ${e.message}`);
+  } catch (_) {
+    // 静默忽略：无 SeDebugPrivilege 时多数游戏/应用仍可读
   }
 }
 

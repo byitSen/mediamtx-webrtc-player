@@ -282,14 +282,15 @@ function enableSeDebugPrivilege(api) {
   if (debugPrivTried) return;
   debugPrivTried = true;
   try {
-    const tokenRef = [null];
+    const nullPtr = api.koffi.as(0, "void *");
+    const tokenRef = [nullPtr];
     if (!api.OpenProcessToken(api.GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, tokenRef)) {
       emitLog("warn", "OpenProcessToken 失败，可能无法读取受保护进程", { lastError: api.GetLastError() });
       return;
     }
     const hToken = tokenRef[0];
     const luid = { LowPart: 0, HighPart: 0 };
-    if (!api.LookupPrivilegeValueW(null, "SeDebugPrivilege", luid)) {
+    if (!api.LookupPrivilegeValueW(nullPtr, "SeDebugPrivilege", luid)) {
       api.CloseHandle(hToken);
       emitLog("warn", "LookupPrivilegeValue(SeDebugPrivilege) 失败", { lastError: api.GetLastError() });
       return;
@@ -298,11 +299,14 @@ function enableSeDebugPrivilege(api) {
       PrivilegeCount: 1,
       Privileges: [{ Luid: luid, Attributes: SE_PRIVILEGE_ENABLED }],
     };
-    api.AdjustTokenPrivileges(hToken, false, tp, 0, null, null);
+    api.AdjustTokenPrivileges(hToken, false, tp, 0, nullPtr, nullPtr);
     const err = api.GetLastError() >>> 0;
     api.CloseHandle(hToken);
-    if (err !== 0) {
-      emitLog("warn", `AdjustTokenPrivileges 返回 lastError=${err}（可尝试以管理员运行）`, { lastError: err });
+    // ERROR_SUCCESS=0；ERROR_NOT_ALL_ASSIGNED=1300
+    if (err === 1300) {
+      emitLog("warn", "SeDebugPrivilege 未全部生效(1300)，建议以管理员运行", { lastError: err });
+    } else if (err !== 0) {
+      emitLog("warn", `AdjustTokenPrivileges lastError=${err}`, { lastError: err });
     } else {
       emitLog("info", "已启用 SeDebugPrivilege");
     }
@@ -441,24 +445,48 @@ function readI32(api, hProcess, address) {
   return { ok: true, value: res.buf.readInt32LE(0) };
 }
 
+/** Windows x64 用户态规范地址上限；超出则多半是把 32 位指针按 8 字节读脏了 */
+const CANONICAL_USER_MAX = 0x00007fffffffffffffn;
+
+/**
+ * 规范化指针：ptr8 读到非规范地址时，截取低 32 位并建议后续按 4 字节解引用。
+ */
+function sanitizePointer(raw, ptrSize) {
+  if (ptrSize === 4) {
+    return { value: raw & 0xffffffffn, effectiveSize: 4, truncated: false, raw };
+  }
+  if (raw === 0n) return { value: 0n, effectiveSize: 8, truncated: false, raw };
+  if (raw <= CANONICAL_USER_MAX) {
+    return { value: raw, effectiveSize: 8, truncated: false, raw };
+  }
+  const low = raw & 0xffffffffn;
+  return { value: low, effectiveSize: 4, truncated: true, raw };
+}
+
 function resolveChainValue(api, hProcess, moduleBase, moduleOffset, offsets, ptrSize) {
   if (!offsets.length) return { ok: false, error: "empty offsets" };
 
+  let effectivePtrSize = ptrSize;
   const staticAddr = moduleBase + BigInt(moduleOffset >>> 0);
-  const first = readPointer(api, hProcess, staticAddr, ptrSize);
+  const first = readPointer(api, hProcess, staticAddr, effectivePtrSize);
   if (!first.ok) {
     return {
       ok: false,
-      error: `read static base failed @ ${hexAddr(staticAddr)} = module ${hexAddr(moduleBase)} + ${hexOff(moduleOffset)} (ptr${ptrSize}) err=${first.error || "?"} lastError=${first.lastError ?? "?"} ${first.hint || ""}`.trim(),
+      error: `read static base failed @ ${hexAddr(staticAddr)} = module ${hexAddr(moduleBase)} + ${hexOff(moduleOffset)} (ptr${effectivePtrSize}) err=${first.error || "?"} lastError=${first.lastError ?? "?"} ${first.hint || ""}`.trim(),
       step: 0,
       staticAddr,
       moduleBase,
-      ptrSize,
+      ptrSize: effectivePtrSize,
       lastError: first.lastError,
       detail: first.error,
     };
   }
-  let ptr = first.value;
+
+  let san = sanitizePointer(first.value, effectivePtrSize);
+  if (san.truncated) {
+    effectivePtrSize = 4;
+  }
+  let ptr = san.value;
   if (ptr === 0n) {
     return {
       ok: false,
@@ -466,37 +494,52 @@ function resolveChainValue(api, hProcess, moduleBase, moduleOffset, offsets, ptr
       step: 0,
       staticAddr,
       moduleBase,
-      ptrSize,
+      ptrSize: effectivePtrSize,
     };
   }
 
-  const steps = [{ addr: hexAddr(staticAddr), ptr: hexAddr(ptr) }];
+  const steps = [
+    {
+      addr: hexAddr(staticAddr),
+      ptr: hexAddr(ptr),
+      raw: san.truncated ? hexAddr(san.raw) : undefined,
+      truncated: san.truncated || undefined,
+    },
+  ];
+
   for (let i = 0; i < offsets.length - 1; i++) {
     const addr = ptr + BigInt(offsets[i] >>> 0);
-    const next = readPointer(api, hProcess, addr, ptrSize);
+    const next = readPointer(api, hProcess, addr, effectivePtrSize);
     if (!next.ok) {
       return {
         ok: false,
-        error: `pointer chain RPM fail at offset[${i}]=${hexOff(offsets[i])} @ ${hexAddr(addr)} (ptr${ptrSize}) err=${next.error || "?"} lastError=${next.lastError ?? "?"}`,
+        error: `pointer chain RPM fail at offset[${i}]=${hexOff(offsets[i])} @ ${hexAddr(addr)} (ptr${effectivePtrSize}) err=${next.error || "?"} lastError=${next.lastError ?? "?"}`,
         step: i + 1,
         steps,
         failAddr: addr,
-        ptrSize,
+        ptrSize: effectivePtrSize,
         lastError: next.lastError,
       };
     }
-    if (next.value === 0n) {
+    san = sanitizePointer(next.value, effectivePtrSize);
+    if (san.truncated) effectivePtrSize = 4;
+    if (san.value === 0n) {
       return {
         ok: false,
-        error: `pointer chain NULL at offset[${i}]=${hexOff(offsets[i])} @ ${hexAddr(addr)} (ptr${ptrSize})`,
+        error: `pointer chain NULL at offset[${i}]=${hexOff(offsets[i])} @ ${hexAddr(addr)} (ptr${effectivePtrSize})`,
         step: i + 1,
         steps,
         failAddr: addr,
-        ptrSize,
+        ptrSize: effectivePtrSize,
       };
     }
-    ptr = next.value;
-    steps.push({ addr: hexAddr(addr), ptr: hexAddr(ptr) });
+    ptr = san.value;
+    steps.push({
+      addr: hexAddr(addr),
+      ptr: hexAddr(ptr),
+      raw: san.truncated ? hexAddr(san.raw) : undefined,
+      truncated: san.truncated || undefined,
+    });
   }
 
   const lastOff = offsets[offsets.length - 1] >>> 0;
@@ -509,11 +552,20 @@ function resolveChainValue(api, hProcess, moduleBase, moduleOffset, offsets, ptr
       step: offsets.length,
       steps,
       finalAddr,
-      ptrSize,
+      ptrSize: effectivePtrSize,
       lastError: val.lastError,
     };
   }
-  return { ok: true, value: val.value, finalAddr, moduleBase, staticAddr, steps, ptrSize };
+  return {
+    ok: true,
+    value: val.value,
+    finalAddr,
+    moduleBase,
+    staticAddr,
+    steps,
+    ptrSize: effectivePtrSize,
+    requestedPtrSize: ptrSize,
+  };
 }
 
 function pollOnce() {

@@ -105,21 +105,13 @@ function loadWinApi() {
       szExeFile: koffi.array("char16", MAX_PATH),
     });
 
-    const MODULEINFO = koffi.struct("MODULEINFO", {
-      lpBaseOfDll: "void *",
-      SizeOfImage: "uint32",
-      EntryPoint: "void *",
-    });
-
     const kernel32 = koffi.load("kernel32.dll");
     const psapi = koffi.load("psapi.dll");
 
     winApi = {
       koffi,
       PROCESSENTRY32W,
-      MODULEINFO,
       entrySize: koffi.sizeof(PROCESSENTRY32W),
-      moduleInfoSize: koffi.sizeof(MODULEINFO),
       CreateToolhelp32Snapshot: kernel32.func("CreateToolhelp32Snapshot", "void *", ["uint32", "uint32"]),
       Process32FirstW: kernel32.func("Process32FirstW", "bool", ["void *", koffi.inout(koffi.pointer(PROCESSENTRY32W))]),
       Process32NextW: kernel32.func("Process32NextW", "bool", ["void *", koffi.inout(koffi.pointer(PROCESSENTRY32W))]),
@@ -137,12 +129,6 @@ function loadWinApi() {
         "void *",
         "uint32",
         koffi.out("uint32 *"),
-        "uint32",
-      ]),
-      GetModuleInformation: psapi.func("GetModuleInformation", "bool", [
-        "void *",
-        "void *",
-        koffi.out(koffi.pointer(MODULEINFO)),
         "uint32",
       ]),
       isNullHandle(h) {
@@ -198,6 +184,7 @@ function findPidByName(api, processName) {
 }
 
 function getMainModuleBase(api, hProcess) {
+  // HMODULE 即为模块加载基址，无需再调 GetModuleInformation（避免 koffi.as(BigInt) 抛 Invalid argument）
   const cb = 8;
   const buf = Buffer.alloc(cb);
   const needed = [0];
@@ -205,23 +192,36 @@ function getMainModuleBase(api, hProcess) {
     return { ok: false, error: "EnumProcessModulesEx failed (可能权限不足)" };
   }
   if ((needed[0] | 0) < 8) return { ok: false, error: "no modules returned" };
-  const hModule = buf.readBigUInt64LE(0);
-  if (hModule === 0n) return { ok: false, error: "null HMODULE" };
+  const base = buf.readBigUInt64LE(0);
+  if (base === 0n) return { ok: false, error: "null HMODULE" };
+  return { ok: true, base };
+}
 
-  const info = { lpBaseOfDll: null, SizeOfImage: 0, EntryPoint: null };
-  const modPtr = api.koffi.as(hModule, "void *");
-  if (!api.GetModuleInformation(hProcess, modPtr, info, api.moduleInfoSize)) {
-    return { ok: false, error: "GetModuleInformation failed" };
+/** 将地址转为 koffi void*（koffi.as 不接受 BigInt，用户态地址在 Number 安全范围内） */
+function toVoidPtr(api, address) {
+  if (address == null) return null;
+  if (typeof address === "bigint") {
+    if (address === 0n) return null;
+    return api.koffi.as(Number(address), "void *");
   }
-  if (!info.lpBaseOfDll) return { ok: false, error: "lpBaseOfDll null" };
-  return { ok: true, base: api.handleAddress(info.lpBaseOfDll) };
+  if (typeof address === "number") {
+    if (!address) return null;
+    return api.koffi.as(address, "void *");
+  }
+  return api.koffi.as(address, "void *");
 }
 
 function readBytes(api, hProcess, address, size) {
   if (address == null || address === 0n) return null;
   const buf = Buffer.alloc(size);
-  const read = [0n];
-  const addrPtr = api.koffi.as(address, "void *");
+  const read = [0];
+  let addrPtr;
+  try {
+    addrPtr = toVoidPtr(api, address);
+  } catch (e) {
+    return null;
+  }
+  if (!addrPtr) return null;
   const ok = api.ReadProcessMemory(hProcess, addrPtr, buf, size, read);
   if (!ok) return null;
   const n = typeof read[0] === "bigint" ? Number(read[0]) : Number(read[0]) || 0;
@@ -288,6 +288,16 @@ function resolveChainValue(api, hProcess, moduleBase, moduleOffset, offsets) {
 }
 
 function pollOnce() {
+  try {
+    pollOnceInner();
+  } catch (e) {
+    emitStatus("error", `ex:${e.message}`, `轮询异常: ${e.message}`, {
+      stack: String(e.stack || "").split("\n").slice(0, 3).join(" | "),
+    });
+  }
+}
+
+function pollOnceInner() {
   if (!currentConfig?.enabled || !currentConfig.processName) return;
   const api = loadWinApi();
   if (!api) {

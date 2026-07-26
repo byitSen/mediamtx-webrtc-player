@@ -32,7 +32,14 @@ function showToast(message) {
 
 const playersGrid = document.getElementById("playersGrid");
 const batchScreenshotBtn = document.getElementById("batchScreenshotBtn");
+const memoryDebugBtn = document.getElementById("memoryDebugBtn");
+const memoryDebugPanel = document.getElementById("memoryDebugPanel");
+const memoryDebugLog = document.getElementById("memoryDebugLog");
+const memoryDebugClearBtn = document.getElementById("memoryDebugClearBtn");
+const memoryDebugCloseBtn = document.getElementById("memoryDebugCloseBtn");
 const saveDirDisplay = document.getElementById("saveDirDisplay");
+
+const MEMORY_DEBUG_MAX_LINES = 400;
 
 const settingsOverlay = document.getElementById("settingsOverlay");
 const settingsCloseBtn = document.getElementById("settingsCloseBtn");
@@ -415,6 +422,68 @@ function isElectronEnv() {
   return !!window.electronAPI;
 }
 
+function formatDebugTime(ts) {
+  const d = new Date(ts || Date.now());
+  return d.toLocaleTimeString("zh-CN", { hour12: false }) + "." + String(d.getMilliseconds()).padStart(3, "0");
+}
+
+function appendMemoryDebugLog(entry) {
+  if (!memoryDebugLog || !entry) return;
+  const level = entry.level || "info";
+  const line = document.createElement("div");
+  line.className = `log-${level}`;
+  const detail =
+    entry.detail && typeof entry.detail === "object"
+      ? " " + JSON.stringify(entry.detail)
+      : "";
+  line.textContent = `[${formatDebugTime(entry.ts)}] [${level}] ${entry.message || ""}${detail}`;
+  memoryDebugLog.appendChild(line);
+  while (memoryDebugLog.childElementCount > MEMORY_DEBUG_MAX_LINES) {
+    memoryDebugLog.removeChild(memoryDebugLog.firstChild);
+  }
+  memoryDebugLog.scrollTop = memoryDebugLog.scrollHeight;
+}
+
+function openMemoryDebugPanel() {
+  if (!memoryDebugPanel) return;
+  memoryDebugPanel.classList.remove("hidden");
+  memoryDebugPanel.setAttribute("aria-hidden", "false");
+}
+
+function closeMemoryDebugPanel() {
+  if (!memoryDebugPanel) return;
+  memoryDebugPanel.classList.add("hidden");
+  memoryDebugPanel.setAttribute("aria-hidden", "true");
+}
+
+function toggleMemoryDebugPanel() {
+  if (!memoryDebugPanel) return;
+  if (memoryDebugPanel.classList.contains("hidden")) openMemoryDebugPanel();
+  else closeMemoryDebugPanel();
+}
+
+function setupMemoryDebugUi() {
+  const showBtn = isElectronEnv() && window.electronAPI.platform === "win32";
+  if (memoryDebugBtn) {
+    memoryDebugBtn.style.display = showBtn ? "" : "none";
+    memoryDebugBtn.addEventListener("click", toggleMemoryDebugPanel);
+  }
+  if (memoryDebugClearBtn) {
+    memoryDebugClearBtn.addEventListener("click", () => {
+      if (memoryDebugLog) memoryDebugLog.innerHTML = "";
+    });
+  }
+  if (memoryDebugCloseBtn) memoryDebugCloseBtn.addEventListener("click", closeMemoryDebugPanel);
+  if (isElectronEnv()) {
+    window.addEventListener("memory-watch-log", (ev) => {
+      appendMemoryDebugLog(ev.detail);
+      if (ev.detail?.level === "trigger" || ev.detail?.level === "error") {
+        openMemoryDebugPanel();
+      }
+    });
+  }
+}
+
 async function chooseSaveDir() {
   if (!isElectronEnv()) return;
   try {
@@ -513,6 +582,7 @@ function setupGlobalControls() {
 
 window.addEventListener("load", () => {
   setupGlobalControls();
+  setupMemoryDebugUi();
   const cfg = getEffectiveSettings();
   const gridCols = cfg.gridColumns || 2;
   const maxActive = cfg.maxActiveConnections || 8;

@@ -2,7 +2,7 @@ const { app, BrowserWindow, ipcMain, dialog, session, globalShortcut } = require
 const path = require("path");
 const fs = require("fs");
 const http = require("http");
-const { stopMemoryWatch, updateMemoryWatch } = require("./memory-watch");
+const { stopMemoryWatch, updateMemoryWatch, setMemoryWatchLogger } = require("./memory-watch");
 
 // Chromium 136+ WebRTC H.265：启用解码并在 SDP 中协商 H.265，便于直接播 H.265 源
 app.commandLine.appendSwitch("enable-features", "HevcVideoDecoder,WebRtcAllowH265Receive,WebRtcAllowH265Send");
@@ -106,6 +106,14 @@ function fireScreenshotTrigger() {
   }
 }
 
+function emitMemoryWatchLog(entry) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send("memory-watch-log", entry);
+  }
+}
+
+setMemoryWatchLogger(emitMemoryWatchLog);
+
 app.whenReady().then(() => {
   session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
     callback({
@@ -200,7 +208,7 @@ ipcMain.handle("register-screenshot-shortcut", (_, accelerator) => {
 
 ipcMain.handle("configure-memory-watch", (_, config) => {
   try {
-    return updateMemoryWatch(config, fireScreenshotTrigger);
+    return updateMemoryWatch(config, fireScreenshotTrigger, emitMemoryWatchLog);
   } catch (e) {
     console.warn("[memory-watch] configure failed:", e.message);
     stopMemoryWatch();

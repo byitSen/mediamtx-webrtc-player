@@ -11,9 +11,21 @@
       <div class="title">MediaMTX + WebRTC 多窗口摄像头播放器</div>
       <div class="controls">
         <button id="batchScreenshotBtn" class="btn primary" type="button">一键截图所有摄像头</button>
+        <button id="memoryDebugBtn" class="btn secondary" type="button" title="查看内存监控日志">内存调试</button>
         <button id="settingsBtn" class="btn secondary btn-settings" type="button">⚙ 设置</button>
       </div>
     </header>
+
+    <div id="memoryDebugPanel" class="memory-debug-panel hidden" aria-hidden="true">
+      <div class="memory-debug-header">
+        <strong>内存监控调试</strong>
+        <div class="memory-debug-actions">
+          <button type="button" id="memoryDebugClearBtn" class="btn secondary btn-sm">清空</button>
+          <button type="button" id="memoryDebugCloseBtn" class="btn secondary btn-sm">关闭</button>
+        </div>
+      </div>
+      <pre id="memoryDebugLog" class="memory-debug-log" aria-live="polite"></pre>
+    </div>
 
     <main>
       <section class="status-panel">

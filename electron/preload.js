@@ -4,6 +4,10 @@ ipcRenderer.on("screenshot-trigger", () => {
   window.dispatchEvent(new CustomEvent("screenshot-trigger"));
 });
 
+ipcRenderer.on("memory-watch-log", (_, entry) => {
+  window.dispatchEvent(new CustomEvent("memory-watch-log", { detail: entry }));
+});
+
 contextBridge.exposeInMainWorld("electronAPI", {
   chooseSaveDir: () => ipcRenderer.invoke("choose-save-dir"),
   saveScreenshot: (opts) => ipcRenderer.invoke("save-screenshot", opts),

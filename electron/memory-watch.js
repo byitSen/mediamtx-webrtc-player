@@ -82,11 +82,15 @@ function normalizeConfig(cfg) {
   const moduleOffset = parseOffset(cfg.moduleOffset);
   const rawOffsets = Array.isArray(cfg.offsets) ? cfg.offsets : [];
   const offsets = rawOffsets.map(parseOffset);
+  // pointerSize: 8 | 4 | 0(auto)；默认 8（64 位）
+  let pointerSize = Number(cfg.pointerSize);
+  if (pointerSize !== 4 && pointerSize !== 8 && pointerSize !== 0) pointerSize = 8;
   return {
     enabled: !!cfg.enabled,
     processName,
     moduleOffset,
     offsets,
+    pointerSize,
   };
 }
 
@@ -143,13 +147,16 @@ function loadWinApi() {
       Module32NextW: kernel32.func("Module32NextW", "bool", ["void *", koffi.inout(koffi.pointer(MODULEENTRY32W))]),
       OpenProcess: kernel32.func("OpenProcess", "void *", ["uint32", "bool", "uint32"]),
       CloseHandle: kernel32.func("CloseHandle", "bool", ["void *"]),
-      IsWow64Process: kernel32.func("IsWow64Process", "bool", ["void *", koffi.out("bool *")]),
+      // Windows BOOL 是 32 位 int，不能用 C bool*
+      IsWow64Process: kernel32.func("IsWow64Process", "bool", ["void *", koffi.out("int *")]),
+      GetLastError: kernel32.func("GetLastError", "uint32", []),
+      // lpNumberOfBytesRead 可为 NULL
       ReadProcessMemory: kernel32.func("ReadProcessMemory", "bool", [
         "void *",
         "void *",
         "void *",
         "size_t",
-        koffi.out("size_t *"),
+        "size_t *",
       ]),
       EnumProcessModulesEx: psapi.func("EnumProcessModulesEx", "bool", [
         "void *",
@@ -208,18 +215,23 @@ function findPidByName(api, processName) {
   }
 }
 
-/** 64 位本机上：Wow64=true 表示目标是 32 位进程 */
+/** 返回 4 或 8；Windows BOOL 用 int 读取 */
 function detectPtrSize(api, hProcess) {
-  const flag = [false];
+  const flag = [0];
   try {
     if (api.IsWow64Process(hProcess, flag)) {
+      // Wow64=true → 目标是 32 位进程
       if (flag[0]) return 4;
-      // 本进程若是 32 位则目标也是 32 位；Electron 正式包为 64 位
       if (process.arch === "ia32") return 4;
       return 8;
     }
   } catch (_) {}
   return 8;
+}
+
+function resolvePtrSize(api, hProcess, configured) {
+  if (configured === 4 || configured === 8) return configured;
+  return detectPtrSize(api, hProcess);
 }
 
 function readModuleBaseName(api, hProcess, hModule) {
@@ -260,10 +272,13 @@ function getMainModuleBase(api, hProcess, pid, processName) {
       if (api.Module32FirstW(snap, entry)) {
         do {
           const name = String(entry.szModule || "").toLowerCase();
-          const base =
-            typeof entry.modBaseAddr === "bigint"
-              ? entry.modBaseAddr
-              : BigInt(entry.modBaseAddr >>> 0 || entry.modBaseAddr || 0);
+          let base = 0n;
+          try {
+            if (typeof entry.modBaseAddr === "bigint") base = entry.modBaseAddr;
+            else if (entry.modBaseAddr != null) base = BigInt(entry.modBaseAddr);
+          } catch {
+            base = 0n;
+          }
           if (name === target && base !== 0n) {
             return { ok: true, base, moduleName: name, via: "Module32" };
           }
@@ -319,45 +334,61 @@ function toVoidPtr(api, address) {
 }
 
 function readBytes(api, hProcess, address, size) {
-  if (address == null || address === 0n) return null;
+  if (address == null || address === 0n) return { ok: false, error: "null address" };
   const buf = Buffer.alloc(size);
-  const read = [0];
   let addrPtr;
   try {
     addrPtr = toVoidPtr(api, address);
-  } catch {
-    return null;
+  } catch (e) {
+    return { ok: false, error: `toVoidPtr: ${e.message}` };
   }
-  if (!addrPtr) return null;
-  const ok = api.ReadProcessMemory(hProcess, addrPtr, buf, size, read);
-  if (!ok) return null;
-  const n = typeof read[0] === "bigint" ? Number(read[0]) : Number(read[0]) || 0;
-  if (n < size) return null;
-  return buf;
+  if (!addrPtr) return { ok: false, error: "toVoidPtr null" };
+  // 传 null 避免 size_t* out 在 Windows 上绑定异常导致 RPM 误失败
+  const ok = api.ReadProcessMemory(hProcess, addrPtr, buf, size, null);
+  if (!ok) {
+    let lastErr = 0;
+    try {
+      lastErr = api.GetLastError() >>> 0;
+    } catch (_) {}
+    return { ok: false, error: `RPM failed`, lastError: lastErr, address: hexAddr(address), size };
+  }
+  return { ok: true, buf };
 }
 
 function readPointer(api, hProcess, address, ptrSize) {
-  const buf = readBytes(api, hProcess, address, ptrSize);
-  if (!buf) return null;
-  if (ptrSize === 4) return BigInt(buf.readUInt32LE(0));
-  return buf.readBigUInt64LE(0);
+  const res = readBytes(api, hProcess, address, ptrSize);
+  if (!res.ok) return { ok: false, ...res };
+  const value = ptrSize === 4 ? BigInt(res.buf.readUInt32LE(0)) : res.buf.readBigUInt64LE(0);
+  return { ok: true, value };
 }
 
 function readI32(api, hProcess, address) {
-  const buf = readBytes(api, hProcess, address, 4);
-  if (!buf) return null;
-  return buf.readInt32LE(0);
+  const res = readBytes(api, hProcess, address, 4);
+  if (!res.ok) return { ok: false, ...res };
+  return { ok: true, value: res.buf.readInt32LE(0) };
 }
 
 function resolveChainValue(api, hProcess, moduleBase, moduleOffset, offsets, ptrSize) {
   if (!offsets.length) return { ok: false, error: "empty offsets" };
 
   const staticAddr = moduleBase + BigInt(moduleOffset >>> 0);
-  let ptr = readPointer(api, hProcess, staticAddr, ptrSize);
-  if (ptr == null || ptr === 0n) {
+  const first = readPointer(api, hProcess, staticAddr, ptrSize);
+  if (!first.ok) {
     return {
       ok: false,
-      error: `read static base failed @ ${hexAddr(staticAddr)} = module ${hexAddr(moduleBase)} + ${hexOff(moduleOffset)} (ptr${ptrSize})`,
+      error: `read static base failed @ ${hexAddr(staticAddr)} = module ${hexAddr(moduleBase)} + ${hexOff(moduleOffset)} (ptr${ptrSize}) lastError=${first.lastError ?? "?"}`,
+      step: 0,
+      staticAddr,
+      moduleBase,
+      ptrSize,
+      lastError: first.lastError,
+    };
+  }
+  let ptr = first.value;
+  if (ptr === 0n) {
+    return {
+      ok: false,
+      error: `static pointer is NULL @ ${hexAddr(staticAddr)} (ptr${ptrSize})`,
       step: 0,
       staticAddr,
       moduleBase,
@@ -369,34 +400,46 @@ function resolveChainValue(api, hProcess, moduleBase, moduleOffset, offsets, ptr
   for (let i = 0; i < offsets.length - 1; i++) {
     const addr = ptr + BigInt(offsets[i] >>> 0);
     const next = readPointer(api, hProcess, addr, ptrSize);
-    if (next == null || next === 0n) {
+    if (!next.ok) {
       return {
         ok: false,
-        error: `pointer chain break at offset[${i}]=${hexOff(offsets[i])} @ ${hexAddr(addr)} (ptr${ptrSize})`,
+        error: `pointer chain RPM fail at offset[${i}]=${hexOff(offsets[i])} @ ${hexAddr(addr)} (ptr${ptrSize}) lastError=${next.lastError ?? "?"}`,
+        step: i + 1,
+        steps,
+        failAddr: addr,
+        ptrSize,
+        lastError: next.lastError,
+      };
+    }
+    if (next.value === 0n) {
+      return {
+        ok: false,
+        error: `pointer chain NULL at offset[${i}]=${hexOff(offsets[i])} @ ${hexAddr(addr)} (ptr${ptrSize})`,
         step: i + 1,
         steps,
         failAddr: addr,
         ptrSize,
       };
     }
-    ptr = next;
+    ptr = next.value;
     steps.push({ addr: hexAddr(addr), ptr: hexAddr(ptr) });
   }
 
   const lastOff = offsets[offsets.length - 1] >>> 0;
   const finalAddr = ptr + BigInt(lastOff);
-  const value = readI32(api, hProcess, finalAddr);
-  if (value == null) {
+  const val = readI32(api, hProcess, finalAddr);
+  if (!val.ok) {
     return {
       ok: false,
-      error: `read int32 failed @ ${hexAddr(finalAddr)} (last+${hexOff(lastOff)})`,
+      error: `read int32 failed @ ${hexAddr(finalAddr)} (last+${hexOff(lastOff)}) lastError=${val.lastError ?? "?"}`,
       step: offsets.length,
       steps,
       finalAddr,
       ptrSize,
+      lastError: val.lastError,
     };
   }
-  return { ok: true, value, finalAddr, moduleBase, staticAddr, steps, ptrSize };
+  return { ok: true, value: val.value, finalAddr, moduleBase, staticAddr, steps, ptrSize };
 }
 
 function pollOnce() {
@@ -435,7 +478,7 @@ function pollOnceInner() {
   }
 
   try {
-    const ptrSize = detectPtrSize(api, hProcess);
+    const ptrSize = resolvePtrSize(api, hProcess, currentConfig.pointerSize);
     const mod = getMainModuleBase(api, hProcess, found.pid, currentConfig.processName);
     if (!mod.ok) {
       emitStatus("error", `mod:${found.pid}`, `获取模块基址失败: ${mod.error}`, { pid: found.pid });
@@ -443,7 +486,7 @@ function pollOnceInner() {
     }
 
     const staticAddr = mod.base + BigInt(currentConfig.moduleOffset >>> 0);
-    let result = resolveChainValue(
+    const result = resolveChainValue(
       api,
       hProcess,
       mod.base,
@@ -452,20 +495,6 @@ function pollOnceInner() {
       ptrSize
     );
 
-    // 若按检测位宽失败，再试另一种指针宽度（兼容误判）
-    if (!result.ok) {
-      const alt = ptrSize === 8 ? 4 : 8;
-      const retry = resolveChainValue(
-        api,
-        hProcess,
-        mod.base,
-        currentConfig.moduleOffset,
-        currentConfig.offsets,
-        alt
-      );
-      if (retry.ok) result = retry;
-    }
-
     if (!result.ok) {
       emitStatus("warn", `chain:${result.error}`, `指针链读取失败: ${result.error}`, {
         pid: found.pid,
@@ -473,9 +502,10 @@ function pollOnceInner() {
         moduleName: mod.moduleName,
         moduleVia: mod.via,
         staticAddr: hexAddr(staticAddr),
-        expectHint: "若 CE 绝对地址为 0xDB27E0，则基址应为 static-0x9B27E0",
+        configuredPtrSize: currentConfig.pointerSize,
+        ptrSize,
+        lastError: result.lastError,
         step: result.step,
-        ptrSize: result.ptrSize,
       });
       return;
     }
@@ -559,10 +589,11 @@ function startMemoryWatch(config, triggerCb, logCb) {
   timer = setInterval(pollOnce, POLL_INTERVAL_MS);
   emitLog(
     "info",
-    `内存监控已启动 process=${normalized.processName} static=${hexOff(normalized.moduleOffset)} offsets=[${normalized.offsets.map(hexOff).join(", ")}]`,
+    `内存监控已启动 process=${normalized.processName} static=${hexOff(normalized.moduleOffset)} ptr=${normalized.pointerSize || "auto"} offsets=[${normalized.offsets.map(hexOff).join(", ")}]`,
     {
       processName: normalized.processName,
       moduleOffset: hexOff(normalized.moduleOffset),
+      pointerSize: normalized.pointerSize,
       offsets: normalized.offsets.map(hexOff),
     }
   );
@@ -597,10 +628,11 @@ function updateMemoryWatch(config, triggerCb, logCb) {
   lastStatusKey = "";
   emitLog(
     "info",
-    `${wasRunning ? "监控配置已更新" : "内存监控已启动"} process=${normalized.processName} static=${hexOff(normalized.moduleOffset)} offsets=[${normalized.offsets.map(hexOff).join(", ")}]`,
+    `${wasRunning ? "监控配置已更新" : "内存监控已启动"} process=${normalized.processName} static=${hexOff(normalized.moduleOffset)} ptr=${normalized.pointerSize || "auto"} offsets=[${normalized.offsets.map(hexOff).join(", ")}]`,
     {
       processName: normalized.processName,
       moduleOffset: hexOff(normalized.moduleOffset),
+      pointerSize: normalized.pointerSize,
       offsets: normalized.offsets.map(hexOff),
     }
   );

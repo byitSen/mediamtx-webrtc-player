@@ -15,6 +15,7 @@ function getDefaultSettings() {
     memoryWatchProcessName: "weight.exe",
     memoryWatchModuleOffset: "0x9B27E0",
     memoryWatchOffsets: ["0x5EC", "0x310", "0x504", "0x94", "0x4DC"],
+    memoryWatchPointerSize: 8,
   };
 }
 

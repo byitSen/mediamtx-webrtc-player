@@ -121,10 +121,16 @@
             <input type="text" id="settingMemoryWatchProcessName" placeholder="weight.exe" maxlength="128" />
             <label>静态基址偏移</label>
             <input type="text" id="settingMemoryWatchModuleOffset" placeholder="0x9B27E0" maxlength="32" />
+            <label>指针宽度</label>
+            <select id="settingMemoryWatchPointerSize">
+              <option value="8" selected>64 位（8 字节）</option>
+              <option value="4">32 位（4 字节）</option>
+              <option value="0">自动检测</option>
+            </select>
             <label>多级偏移（指针链，末级为 int32 值偏移）</label>
             <div id="settingMemoryWatchOffsetsList" class="offsets-list"></div>
             <button type="button" id="settingAddMemoryOffset" class="btn secondary btn-sm">添加偏移</button>
-            <span class="hint" id="settingMemoryWatchHint">仅 Windows 桌面版有效；按 64 位指针解析；监控值变为 0 时截图一次，恢复非 0 后重新武装。</span>
+            <span class="hint" id="settingMemoryWatchHint">仅 Windows 桌面版有效；64 位进程请选 64 位指针；监控值变为 0 时截图一次。</span>
           </fieldset>
         </div>
         <div class="modal-footer">

@@ -67,6 +67,7 @@ const settingMemoryWatchSection = document.getElementById("settingMemoryWatchSec
 const settingMemoryWatchEnabled = document.getElementById("settingMemoryWatchEnabled");
 const settingMemoryWatchProcessName = document.getElementById("settingMemoryWatchProcessName");
 const settingMemoryWatchModuleOffset = document.getElementById("settingMemoryWatchModuleOffset");
+const settingMemoryWatchPointerSize = document.getElementById("settingMemoryWatchPointerSize");
 const settingMemoryWatchOffsetsList = document.getElementById("settingMemoryWatchOffsetsList");
 const settingAddMemoryOffset = document.getElementById("settingAddMemoryOffset");
 const settingMemoryWatchHint = document.getElementById("settingMemoryWatchHint");
@@ -141,6 +142,7 @@ function collectMemoryWatchOffsets() {
 }
 
 function buildMemoryWatchConfig(cfg) {
+  const ptr = Number(cfg.memoryWatchPointerSize);
   return {
     enabled: !!cfg.memoryWatchEnabled,
     processName: (cfg.memoryWatchProcessName || "").trim(),
@@ -148,6 +150,7 @@ function buildMemoryWatchConfig(cfg) {
     offsets: Array.isArray(cfg.memoryWatchOffsets) && cfg.memoryWatchOffsets.length
       ? cfg.memoryWatchOffsets
       : [...DEFAULT_MEMORY_OFFSETS],
+    pointerSize: ptr === 4 || ptr === 8 || ptr === 0 ? ptr : 8,
   };
 }
 
@@ -161,13 +164,13 @@ function updateMemoryWatchSectionAvailability() {
   const isDesktop = isElectronEnv();
   const isWin = isDesktop && window.electronAPI.platform === "win32";
   settingMemoryWatchSection.style.display = isDesktop ? "" : "none";
-  const controls = settingMemoryWatchSection.querySelectorAll("input, button");
+  const controls = settingMemoryWatchSection.querySelectorAll("input, button, select");
   controls.forEach((el) => {
     el.disabled = !isWin;
   });
   if (settingMemoryWatchHint) {
     settingMemoryWatchHint.textContent = isWin
-      ? "仅 Windows 桌面版有效；按 64 位指针解析；监控值变为 0 时截图一次，恢复非 0 后重新武装。"
+      ? "仅 Windows 桌面版有效；64 位进程请选「64 位指针」；监控值变为 0 时截图一次，恢复非 0 后重新武装。"
       : isDesktop
         ? "当前系统非 Windows，内存监控不可用。"
         : "仅 Windows 桌面版可用。";
@@ -216,6 +219,10 @@ function openSettings() {
   }
   if (settingMemoryWatchModuleOffset) {
     settingMemoryWatchModuleOffset.value = cfg.memoryWatchModuleOffset ?? "0x9B27E0";
+  }
+  if (settingMemoryWatchPointerSize) {
+    const ptr = Number(cfg.memoryWatchPointerSize);
+    settingMemoryWatchPointerSize.value = String(ptr === 4 || ptr === 8 || ptr === 0 ? ptr : 8);
   }
   if (settingMemoryWatchOffsetsList) {
     settingMemoryWatchOffsetsList.innerHTML = "";
@@ -290,6 +297,11 @@ function saveSettingsFromForm() {
   const memoryWatchEnabled = !!settingMemoryWatchEnabled?.checked;
   const memoryWatchProcessName = (settingMemoryWatchProcessName?.value || "").trim() || "weight.exe";
   const memoryWatchModuleOffset = (settingMemoryWatchModuleOffset?.value || "").trim() || "0x9B27E0";
+  const memoryWatchPointerSizeRaw = Number(settingMemoryWatchPointerSize?.value);
+  const memoryWatchPointerSize =
+    memoryWatchPointerSizeRaw === 4 || memoryWatchPointerSizeRaw === 8 || memoryWatchPointerSizeRaw === 0
+      ? memoryWatchPointerSizeRaw
+      : 8;
   const memoryWatchOffsets = collectMemoryWatchOffsets();
 
   const next = {
@@ -306,6 +318,7 @@ function saveSettingsFromForm() {
     memoryWatchEnabled,
     memoryWatchProcessName,
     memoryWatchModuleOffset,
+    memoryWatchPointerSize,
     memoryWatchOffsets,
   };
   saveSettings(next);

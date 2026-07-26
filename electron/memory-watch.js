@@ -133,11 +133,27 @@ function loadWinApi() {
 
     const kernel32 = koffi.load("kernel32.dll");
     const psapi = koffi.load("psapi.dll");
+    const advapi = koffi.load("advapi32.dll");
+
+    const LUID = koffi.struct("LUID", {
+      LowPart: "uint32",
+      HighPart: "int32",
+    });
+    const LUID_AND_ATTRIBUTES = koffi.struct("LUID_AND_ATTRIBUTES", {
+      Luid: LUID,
+      Attributes: "uint32",
+    });
+    const TOKEN_PRIVILEGES = koffi.struct("TOKEN_PRIVILEGES", {
+      PrivilegeCount: "uint32",
+      Privileges: koffi.array(LUID_AND_ATTRIBUTES, 1),
+    });
 
     winApi = {
       koffi,
       PROCESSENTRY32W,
       MODULEENTRY32W,
+      LUID,
+      TOKEN_PRIVILEGES,
       entrySize: koffi.sizeof(PROCESSENTRY32W),
       moduleEntrySize: koffi.sizeof(MODULEENTRY32W),
       CreateToolhelp32Snapshot: kernel32.func("CreateToolhelp32Snapshot", "void *", ["uint32", "uint32"]),
@@ -147,16 +163,16 @@ function loadWinApi() {
       Module32NextW: kernel32.func("Module32NextW", "bool", ["void *", koffi.inout(koffi.pointer(MODULEENTRY32W))]),
       OpenProcess: kernel32.func("OpenProcess", "void *", ["uint32", "bool", "uint32"]),
       CloseHandle: kernel32.func("CloseHandle", "bool", ["void *"]),
-      // Windows BOOL 是 32 位 int，不能用 C bool*
       IsWow64Process: kernel32.func("IsWow64Process", "bool", ["void *", koffi.out("int *")]),
       GetLastError: kernel32.func("GetLastError", "uint32", []),
-      // lpNumberOfBytesRead 可为 NULL
+      SetLastError: kernel32.func("SetLastError", "void", ["uint32"]),
+      GetCurrentProcess: kernel32.func("GetCurrentProcess", "void *", []),
       ReadProcessMemory: kernel32.func("ReadProcessMemory", "bool", [
         "void *",
+        "uintptr",
         "void *",
+        "uintptr",
         "void *",
-        "size_t",
-        "size_t *",
       ]),
       EnumProcessModulesEx: psapi.func("EnumProcessModulesEx", "bool", [
         "void *",
@@ -165,7 +181,21 @@ function loadWinApi() {
         koffi.out("uint32 *"),
         "uint32",
       ]),
-      GetModuleBaseNameW: psapi.func("GetModuleBaseNameW", "uint32", ["void *", "void *", "void *", "uint32"]),
+      GetModuleBaseNameW: psapi.func("GetModuleBaseNameW", "uint32", ["void *", "uintptr", "void *", "uint32"]),
+      OpenProcessToken: advapi.func("OpenProcessToken", "bool", ["void *", "uint32", koffi.out("void *")]),
+      LookupPrivilegeValueW: advapi.func("LookupPrivilegeValueW", "bool", [
+        "void *",
+        "str16",
+        koffi.out(koffi.pointer(LUID)),
+      ]),
+      AdjustTokenPrivileges: advapi.func("AdjustTokenPrivileges", "bool", [
+        "void *",
+        "bool",
+        koffi.pointer(TOKEN_PRIVILEGES),
+        "uint32",
+        "void *",
+        "void *",
+      ]),
       isNullHandle(h) {
         if (h == null || h === 0 || h === 0n) return true;
         try {
@@ -236,16 +266,94 @@ function resolvePtrSize(api, hProcess, configured) {
 
 function readModuleBaseName(api, hProcess, hModule) {
   const buf = Buffer.alloc((MAX_PATH + 1) * 2);
-  let modPtr;
-  try {
-    modPtr = toVoidPtr(api, hModule);
-  } catch {
-    return "";
-  }
-  if (!modPtr) return "";
-  const n = api.GetModuleBaseNameW(hProcess, modPtr, buf, MAX_PATH);
+  const modAddr = typeof hModule === "bigint" ? Number(hModule) : Number(hModule);
+  if (!modAddr) return "";
+  const n = api.GetModuleBaseNameW(hProcess, modAddr, buf, MAX_PATH);
   if (!n) return "";
   return buf.toString("utf16le", 0, n * 2).replace(/\0+$/, "");
+}
+
+const TOKEN_ADJUST_PRIVILEGES = 0x0020;
+const TOKEN_QUERY = 0x0008;
+const SE_PRIVILEGE_ENABLED = 0x00000002;
+let debugPrivTried = false;
+
+function enableSeDebugPrivilege(api) {
+  if (debugPrivTried) return;
+  debugPrivTried = true;
+  try {
+    const tokenRef = [null];
+    if (!api.OpenProcessToken(api.GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY, tokenRef)) {
+      emitLog("warn", "OpenProcessToken 失败，可能无法读取受保护进程", { lastError: api.GetLastError() });
+      return;
+    }
+    const hToken = tokenRef[0];
+    const luid = { LowPart: 0, HighPart: 0 };
+    if (!api.LookupPrivilegeValueW(null, "SeDebugPrivilege", luid)) {
+      api.CloseHandle(hToken);
+      emitLog("warn", "LookupPrivilegeValue(SeDebugPrivilege) 失败", { lastError: api.GetLastError() });
+      return;
+    }
+    const tp = {
+      PrivilegeCount: 1,
+      Privileges: [{ Luid: luid, Attributes: SE_PRIVILEGE_ENABLED }],
+    };
+    api.AdjustTokenPrivileges(hToken, false, tp, 0, null, null);
+    const err = api.GetLastError() >>> 0;
+    api.CloseHandle(hToken);
+    if (err !== 0) {
+      emitLog("warn", `AdjustTokenPrivileges 返回 lastError=${err}（可尝试以管理员运行）`, { lastError: err });
+    } else {
+      emitLog("info", "已启用 SeDebugPrivilege");
+    }
+  } catch (e) {
+    emitLog("warn", `启用 SeDebugPrivilege 异常: ${e.message}`);
+  }
+}
+
+function toAddrNumber(address) {
+  if (address == null) return null;
+  if (typeof address === "bigint") {
+    if (address === 0n) return null;
+    return Number(address);
+  }
+  const n = Number(address);
+  return n ? n : null;
+}
+
+function readBytes(api, hProcess, address, size) {
+  const addrNum = toAddrNumber(address);
+  if (addrNum == null) return { ok: false, error: "null address", lastError: 0 };
+  const buf = Buffer.alloc(size);
+  const bytesRead = Buffer.alloc(8);
+  try {
+    api.SetLastError(0);
+  } catch (_) {}
+  let ok = false;
+  try {
+    ok = !!api.ReadProcessMemory(hProcess, addrNum, buf, size, bytesRead);
+  } catch (e) {
+    return { ok: false, error: `RPM throw: ${e.message}`, lastError: -1, address: hexAddr(address), size };
+  }
+  if (!ok) {
+    let lastErr = 0;
+    try {
+      lastErr = api.GetLastError() >>> 0;
+    } catch (_) {}
+    return {
+      ok: false,
+      error: `RPM failed`,
+      lastError: lastErr,
+      address: hexAddr(address),
+      size,
+      hint: lastErr === 5 ? "拒绝访问，请尝试以管理员运行" : lastErr === 299 ? "部分复制，地址可能无效" : undefined,
+    };
+  }
+  const nread = bytesRead.readUInt32LE(0); // size_t low dword enough for small reads
+  if (nread > 0 && nread < size) {
+    return { ok: false, error: `RPM partial ${nread}/${size}`, lastError: 299, address: hexAddr(address), size };
+  }
+  return { ok: true, buf };
 }
 
 /**
@@ -320,41 +428,6 @@ function getMainModuleBase(api, hProcess, pid, processName) {
   return { ok: false, error: "无法获取主模块基址（Module32/EnumProcessModules 均失败）" };
 }
 
-function toVoidPtr(api, address) {
-  if (address == null) return null;
-  if (typeof address === "bigint") {
-    if (address === 0n) return null;
-    return api.koffi.as(Number(address), "void *");
-  }
-  if (typeof address === "number") {
-    if (!address) return null;
-    return api.koffi.as(address, "void *");
-  }
-  return api.koffi.as(address, "void *");
-}
-
-function readBytes(api, hProcess, address, size) {
-  if (address == null || address === 0n) return { ok: false, error: "null address" };
-  const buf = Buffer.alloc(size);
-  let addrPtr;
-  try {
-    addrPtr = toVoidPtr(api, address);
-  } catch (e) {
-    return { ok: false, error: `toVoidPtr: ${e.message}` };
-  }
-  if (!addrPtr) return { ok: false, error: "toVoidPtr null" };
-  // 传 null 避免 size_t* out 在 Windows 上绑定异常导致 RPM 误失败
-  const ok = api.ReadProcessMemory(hProcess, addrPtr, buf, size, null);
-  if (!ok) {
-    let lastErr = 0;
-    try {
-      lastErr = api.GetLastError() >>> 0;
-    } catch (_) {}
-    return { ok: false, error: `RPM failed`, lastError: lastErr, address: hexAddr(address), size };
-  }
-  return { ok: true, buf };
-}
-
 function readPointer(api, hProcess, address, ptrSize) {
   const res = readBytes(api, hProcess, address, ptrSize);
   if (!res.ok) return { ok: false, ...res };
@@ -376,12 +449,13 @@ function resolveChainValue(api, hProcess, moduleBase, moduleOffset, offsets, ptr
   if (!first.ok) {
     return {
       ok: false,
-      error: `read static base failed @ ${hexAddr(staticAddr)} = module ${hexAddr(moduleBase)} + ${hexOff(moduleOffset)} (ptr${ptrSize}) lastError=${first.lastError ?? "?"}`,
+      error: `read static base failed @ ${hexAddr(staticAddr)} = module ${hexAddr(moduleBase)} + ${hexOff(moduleOffset)} (ptr${ptrSize}) err=${first.error || "?"} lastError=${first.lastError ?? "?"} ${first.hint || ""}`.trim(),
       step: 0,
       staticAddr,
       moduleBase,
       ptrSize,
       lastError: first.lastError,
+      detail: first.error,
     };
   }
   let ptr = first.value;
@@ -403,7 +477,7 @@ function resolveChainValue(api, hProcess, moduleBase, moduleOffset, offsets, ptr
     if (!next.ok) {
       return {
         ok: false,
-        error: `pointer chain RPM fail at offset[${i}]=${hexOff(offsets[i])} @ ${hexAddr(addr)} (ptr${ptrSize}) lastError=${next.lastError ?? "?"}`,
+        error: `pointer chain RPM fail at offset[${i}]=${hexOff(offsets[i])} @ ${hexAddr(addr)} (ptr${ptrSize}) err=${next.error || "?"} lastError=${next.lastError ?? "?"}`,
         step: i + 1,
         steps,
         failAddr: addr,
@@ -431,7 +505,7 @@ function resolveChainValue(api, hProcess, moduleBase, moduleOffset, offsets, ptr
   if (!val.ok) {
     return {
       ok: false,
-      error: `read int32 failed @ ${hexAddr(finalAddr)} (last+${hexOff(lastOff)}) lastError=${val.lastError ?? "?"}`,
+      error: `read int32 failed @ ${hexAddr(finalAddr)} (last+${hexOff(lastOff)}) err=${val.error || "?"} lastError=${val.lastError ?? "?"}`,
       step: offsets.length,
       steps,
       finalAddr,
@@ -469,9 +543,12 @@ function pollOnceInner() {
     return;
   }
 
-  const hProcess = api.OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, false, found.pid);
+  enableSeDebugPrivilege(api);
+
+  const access = PROCESS_VM_READ | PROCESS_QUERY_INFORMATION | 0x1000; // + PROCESS_QUERY_LIMITED_INFORMATION
+  const hProcess = api.OpenProcess(access, false, found.pid);
   if (api.isNullHandle(hProcess)) {
-    emitStatus("error", `open:${found.pid}`, `OpenProcess 失败 pid=${found.pid}（可能需要管理员权限）`, {
+    emitStatus("error", `open:${found.pid}`, `OpenProcess 失败 pid=${found.pid} lastError=${api.GetLastError()}（请尝试以管理员运行）`, {
       pid: found.pid,
     });
     return;

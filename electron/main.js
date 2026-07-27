@@ -206,6 +206,8 @@ ipcMain.handle("register-screenshot-shortcut", (_, accelerator) => {
   } catch (_) {}
 });
 
+ipcMain.handle("get-app-version", () => app.getVersion());
+
 ipcMain.handle("configure-memory-watch", (_, config) => {
   try {
     return updateMemoryWatch(config, fireScreenshotTrigger, emitMemoryWatchLog);

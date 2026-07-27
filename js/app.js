@@ -490,11 +490,37 @@ function setupMemoryDebugUi() {
   if (isElectronEnv()) {
     window.addEventListener("memory-watch-log", (ev) => {
       appendMemoryDebugLog(ev.detail);
-      if (ev.detail?.level === "trigger" || ev.detail?.level === "error") {
-        openMemoryDebugPanel();
-      }
     });
   }
+}
+
+async function resolveAppVersion() {
+  if (isElectronEnv() && window.electronAPI.getAppVersion) {
+    try {
+      const v = await window.electronAPI.getAppVersion();
+      if (v) return String(v);
+    } catch (_) {}
+  }
+  try {
+    const res = await fetch("./package.json", { cache: "no-store" });
+    if (res.ok) {
+      const pkg = await res.json();
+      if (pkg?.version) return String(pkg.version);
+    }
+  } catch (_) {}
+  return "";
+}
+
+async function showAppVersion() {
+  const el = document.getElementById("appVersion");
+  if (!el) return;
+  const version = await resolveAppVersion();
+  if (!version) {
+    el.textContent = "";
+    return;
+  }
+  el.textContent = `v${version}`;
+  el.title = `版本 ${version}`;
 }
 
 async function chooseSaveDir() {
@@ -593,9 +619,10 @@ function setupGlobalControls() {
   updateSaveDirDisplay();
 }
 
-window.addEventListener("load", () => {
+window.addEventListener("load", async () => {
   setupGlobalControls();
   setupMemoryDebugUi();
+  await showAppVersion();
   const cfg = getEffectiveSettings();
   const gridCols = cfg.gridColumns || 2;
   const maxActive = cfg.maxActiveConnections || 8;

@@ -15,5 +15,6 @@ contextBridge.exposeInMainWorld("electronAPI", {
   getWindowSize: () => ipcRenderer.invoke("get-window-size"),
   registerScreenshotShortcut: (accelerator) => ipcRenderer.invoke("register-screenshot-shortcut", accelerator),
   configureMemoryWatch: (cfg) => ipcRenderer.invoke("configure-memory-watch", cfg),
+  getAppVersion: () => ipcRenderer.invoke("get-app-version"),
   platform: process.platform,
 });

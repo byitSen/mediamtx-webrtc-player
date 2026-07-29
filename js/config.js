@@ -4,8 +4,6 @@ function getDefaultSettings() {
   return {
     gridColumns: 2,
     maxActiveConnections: 8,
-    lockFpsEnabled: true,
-    lockFps: 20,
     cameras: [{ name: "摄像头1", rtspUrl: "rtsp://127.0.0.1:554/stream1" }],
     windowWidth: 1020,
     windowHeight: 820,
@@ -18,16 +16,6 @@ function getDefaultSettings() {
     memoryWatchOffsets: ["0x5EC", "0x310", "0x504", "0x94", "0x4DC"],
     memoryWatchPointerSize: 8,
   };
-}
-
-function normalizeLockFps(settings) {
-  const enabled = settings.lockFpsEnabled !== false;
-  let fps = parseInt(settings.lockFps, 10);
-  if (!Number.isFinite(fps)) fps = 20;
-  fps = Math.max(1, Math.min(60, fps));
-  settings.lockFpsEnabled = enabled;
-  settings.lockFps = fps;
-  return settings;
 }
 
 function migrateCameras(cameras) {
@@ -50,7 +38,9 @@ export function loadSettings() {
     const merged = { ...getDefaultSettings(), ...parsed };
     merged.cameras = migrateCameras(merged.cameras);
     if (merged.maxActiveConnections > 16) merged.maxActiveConnections = 16;
-    return normalizeLockFps(merged);
+    delete merged.lockFpsEnabled;
+    delete merged.lockFps;
+    return merged;
   } catch (e) {
     console.warn("loadSettings error", e);
     return getDefaultSettings();

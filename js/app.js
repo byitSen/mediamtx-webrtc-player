@@ -47,8 +47,6 @@ const settingsCancelBtn = document.getElementById("settingsCancelBtn");
 const settingsSaveBtn = document.getElementById("settingsSaveBtn");
 const settingGridColumns = document.getElementById("settingGridColumns");
 const settingMaxActive = document.getElementById("settingMaxActive");
-const settingLockFpsEnabled = document.getElementById("settingLockFpsEnabled");
-const settingLockFps = document.getElementById("settingLockFps");
 const settingCamerasList = document.getElementById("settingCamerasList");
 const settingAddCamera = document.getElementById("settingAddCamera");
 const settingsBtn = document.getElementById("settingsBtn");
@@ -193,8 +191,6 @@ function openSettings() {
 
   if (settingGridColumns) settingGridColumns.value = String(gridColumns);
   if (settingMaxActive) settingMaxActive.value = String(maxActive);
-  if (settingLockFpsEnabled) settingLockFpsEnabled.checked = cfg.lockFpsEnabled !== false;
-  if (settingLockFps) settingLockFps.value = String(Math.max(1, Math.min(60, cfg.lockFps || 20)));
 
   if (settingCamerasList) {
     settingCamerasList.innerHTML = "";
@@ -292,8 +288,6 @@ function saveSettingsFromForm() {
   const current = loadSettings();
   const gridColumns = Math.max(1, Math.min(4, parseInt(settingGridColumns?.value || "2", 10) || 2));
   const maxActive = Math.max(1, Math.min(16, parseInt(settingMaxActive?.value || "8", 10) || 8));
-  const lockFpsEnabled = !!settingLockFpsEnabled?.checked;
-  const lockFps = Math.max(1, Math.min(60, parseInt(settingLockFps?.value || "20", 10) || 20));
   const windowWidth = Math.max(WINDOW_WIDTH_MIN, Math.min(WINDOW_WIDTH_MAX, parseInt(settingWindowWidth?.value || "1020", 10) || 1020));
   const windowHeight = Math.max(WINDOW_HEIGHT_MIN, Math.min(WINDOW_HEIGHT_MAX, parseInt(settingWindowHeight?.value || "820", 10) || 820));
   const fullscreenWidth = Math.max(WINDOW_WIDTH_MIN, Math.min(WINDOW_WIDTH_MAX, parseInt(settingFullscreenWidth?.value || "1240", 10) || 1240));
@@ -314,8 +308,6 @@ function saveSettingsFromForm() {
     cameras,
     gridColumns,
     maxActiveConnections: maxActive,
-    lockFpsEnabled,
-    lockFps,
     windowWidth,
     windowHeight,
     fullscreenWidth,
@@ -328,6 +320,8 @@ function saveSettingsFromForm() {
     memoryWatchOffsets,
   };
   delete next.webrtcBase;
+  delete next.lockFpsEnabled;
+  delete next.lockFps;
   saveSettings(next);
 
   if (isElectronEnv()) {

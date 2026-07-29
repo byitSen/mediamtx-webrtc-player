@@ -1,6 +1,8 @@
 /**
  * H.265 AnnexB → WebCodecs VideoDecoder → canvas
- * 支持按目标 FPS 锁定呈现，减轻网络/解码突发导致的画面抖动。
+ * - 按 Access Unit 攒多 slice 再 decode
+ * - 解码送入串行，避免重叠 flush
+ * - 可按目标 FPS 锁定呈现；统计拆分呈现/解码到达/丢帧
  */
 const START_CODE_4 = [0, 0, 0, 1];
 
@@ -21,8 +23,19 @@ function nalType(nal) {
   return (nal[0] >> 1) & 0x3f;
 }
 
+function isVclNal(type) {
+  return type >= 0 && type <= 31;
+}
+
 function isKeyNal(type) {
+  // IDR_W_RADL=19, IDR_N_LP=20, CRA_NUT=21
   return type === 19 || type === 20 || type === 21;
+}
+
+/** HEVC：NAL 头 2 字节后，slice_segment_header 的 first_slice_segment_in_pic_flag */
+function isFirstSliceOfPic(nal) {
+  if (!nal || nal.length < 3) return true;
+  return (nal[2] & 0x80) !== 0;
 }
 
 function concatBytes(...parts) {
@@ -41,7 +54,7 @@ function withStartCode(nal) {
   return concatBytes(new Uint8Array(START_CODE_4), nal);
 }
 
-function clampFps(n, fallback = 25) {
+function clampFps(n, fallback = 20) {
   const v = Number(n);
   if (!Number.isFinite(v)) return fallback;
   return Math.max(1, Math.min(60, Math.round(v)));
@@ -64,7 +77,7 @@ export class H265Player {
     this.ctx = canvas.getContext("2d");
     this.hooks = hooks;
     this.lockFpsEnabled = !!hooks.lockFpsEnabled;
-    this.lockFps = clampFps(hooks.lockFps, 25);
+    this.lockFps = clampFps(hooks.lockFps, 20);
     this.frameDurationUs = Math.round(1_000_000 / this.lockFps);
 
     this.ws = null;
@@ -74,34 +87,42 @@ export class H265Player {
     this.sps = null;
     this.pps = null;
     this.configured = false;
+    this._configPromise = null;
     this.destroyed = false;
-    this.frameCount = 0;
-    this.lastStatsAt = 0;
-    this.pendingAccessUnit = [];
-    this.pendingIsKey = false;
     this.timestampUs = 0;
+
+    /** 当前未完成的 Access Unit */
+    this.pendingAccessUnit = [];
+    this.pendingHasVcl = false;
+    this.pendingIsKey = false;
+
+    /** @type {{ nals: Uint8Array[], isKey: boolean }[]} */
+    this._decodeQueue = [];
+    this._decodeBusy = false;
 
     /** @type {VideoFrame[]} */
     this._frameQueue = [];
     this._rafId = 0;
     this._nextPresentAt = 0;
-    this._maxQueue = 3;
+    this._maxQueue = 4;
+
+    this._presentCount = 0;
+    this._decodeCount = 0;
+    this._dropCount = 0;
+    this._statsWindowDrops = 0;
+    this.lastStatsAt = 0;
   }
 
   setLockFps(enabled, fps) {
     this.lockFpsEnabled = !!enabled;
-    this.lockFps = clampFps(fps, this.lockFps || 25);
+    this.lockFps = clampFps(fps, this.lockFps || 20);
     this.frameDurationUs = Math.round(1_000_000 / this.lockFps);
     if (this.lockFpsEnabled) {
       this._startPresentLoop();
     } else {
       this._stopPresentLoop();
-      // 解锁后尽快把队列里剩余帧渲完（只留最新一帧）
       while (this._frameQueue.length > 1) {
-        const old = this._frameQueue.shift();
-        try {
-          old.close();
-        } catch (_) {}
+        this._dropQueuedFrame(this._frameQueue.shift());
       }
       if (this._frameQueue.length) this._presentNextFrame();
     }
@@ -165,17 +186,25 @@ export class H265Player {
       } catch (_) {}
       return;
     }
+    this._decodeCount += 1;
+    this._maybeEmitStats();
+
     if (!this.lockFpsEnabled) {
       this._drawFrame(frame);
       return;
     }
     this._frameQueue.push(frame);
     while (this._frameQueue.length > this._maxQueue) {
-      const dropped = this._frameQueue.shift();
-      try {
-        dropped.close();
-      } catch (_) {}
+      this._dropQueuedFrame(this._frameQueue.shift());
     }
+  }
+
+  _dropQueuedFrame(frame) {
+    this._dropCount += 1;
+    this._statsWindowDrops += 1;
+    try {
+      frame.close();
+    } catch (_) {}
   }
 
   _startPresentLoop() {
@@ -205,7 +234,10 @@ export class H265Player {
 
   _presentNextFrame() {
     const frame = this._frameQueue.shift();
-    if (!frame) return;
+    if (!frame) {
+      this._maybeEmitStats();
+      return;
+    }
     this._drawFrame(frame);
   }
 
@@ -237,6 +269,28 @@ export class H265Player {
     }
   }
 
+  _flushPendingAu() {
+    if (!this.pendingAccessUnit.length || !this.pendingHasVcl) {
+      // 仅有 SEI/无 VCL 的残留不送解码
+      this.pendingAccessUnit = [];
+      this.pendingHasVcl = false;
+      this.pendingIsKey = false;
+      return;
+    }
+    const nals = this.pendingAccessUnit;
+    const isKey = this.pendingIsKey;
+    this.pendingAccessUnit = [];
+    this.pendingHasVcl = false;
+    this.pendingIsKey = false;
+    this._enqueueDecode(nals, isKey);
+  }
+
+  /**
+   * Access Unit 边界：
+   * - AUD(35) 开启新 AU → 先 flush 上一 AU
+   * - VCL 且 first_slice_segment_in_pic_flag=1 且已有 VCL → 新图开始，flush 上一 AU
+   * - 同图多 slice：继续攒入 pending，不立即 decode
+   */
   _handleNal(nal) {
     const type = nalType(nal);
 
@@ -253,16 +307,48 @@ export class H265Player {
       return;
     }
 
-    if (type === 35 || type === 39 || type === 40) return;
+    // Access unit delimiter
+    if (type === 35) {
+      this._flushPendingAu();
+      return;
+    }
 
-    const key = isKeyNal(type);
-    if (this.pendingAccessUnit.length) {
-      void this._flushAccessUnit();
+    // SEI：挂到当前 AU（通常在首 VCL 之前）
+    if (type === 39 || type === 40) {
+      if (!this.pendingHasVcl) this.pendingAccessUnit.push(nal);
+      return;
+    }
+
+    if (!isVclNal(type)) return;
+
+    if (isFirstSliceOfPic(nal) && this.pendingHasVcl) {
+      this._flushPendingAu();
     }
 
     this.pendingAccessUnit.push(nal);
-    this.pendingIsKey = key;
-    void this._flushAccessUnit();
+    this.pendingHasVcl = true;
+    if (isKeyNal(type)) this.pendingIsKey = true;
+  }
+
+  _enqueueDecode(nals, isKey) {
+    this._decodeQueue.push({ nals, isKey });
+    void this._pumpDecode();
+  }
+
+  async _pumpDecode() {
+    if (this._decodeBusy) return;
+    this._decodeBusy = true;
+    try {
+      while (this._decodeQueue.length && !this.destroyed) {
+        const item = this._decodeQueue.shift();
+        await this._decodeAccessUnit(item.nals, item.isKey);
+      }
+    } finally {
+      this._decodeBusy = false;
+      if (this._decodeQueue.length && !this.destroyed) {
+        void this._pumpDecode();
+      }
+    }
   }
 
   async _configureIfNeeded(isKey) {
@@ -271,34 +357,36 @@ export class H265Player {
       if (isKey) this._emitError("等待 VPS/SPS/PPS…");
       return false;
     }
+    if (this._configPromise) return this._configPromise;
 
-    const codecCandidates = ["hev1.1.6.L93.B0", "hvc1.1.6.L93.B0", "hev1.1.6.L120.B0"];
-    let lastErr = null;
-    for (const codec of codecCandidates) {
-      try {
-        const config = {
-          codec,
-          optimizeForLatency: true,
-        };
-        const support = await VideoDecoder.isConfigSupported(config);
-        if (!support?.supported) continue;
-        this.decoder.configure(config);
-        this.configured = true;
-        return true;
-      } catch (e) {
-        lastErr = e;
+    this._configPromise = (async () => {
+      const codecCandidates = ["hev1.1.6.L93.B0", "hvc1.1.6.L93.B0", "hev1.1.6.L120.B0"];
+      let lastErr = null;
+      for (const codec of codecCandidates) {
+        try {
+          const config = { codec, optimizeForLatency: true };
+          const support = await VideoDecoder.isConfigSupported(config);
+          if (!support?.supported) continue;
+          this.decoder.configure(config);
+          this.configured = true;
+          return true;
+        } catch (e) {
+          lastErr = e;
+        }
       }
+      this._emitError(lastErr?.message || "HEVC 解码器配置失败（系统可能未安装 HEVC 扩展）");
+      return false;
+    })();
+
+    try {
+      return await this._configPromise;
+    } finally {
+      if (!this.configured) this._configPromise = null;
     }
-    this._emitError(lastErr?.message || "HEVC 解码器配置失败（系统可能未安装 HEVC 扩展）");
-    return false;
   }
 
-  async _flushAccessUnit() {
-    const nals = this.pendingAccessUnit;
-    const isKey = this.pendingIsKey;
-    this.pendingAccessUnit = [];
-    this.pendingIsKey = false;
-    if (!nals.length || !this.decoder) return;
+  async _decodeAccessUnit(nals, isKey) {
+    if (!nals?.length || !this.decoder) return;
 
     const ok = await this._configureIfNeeded(isKey);
     if (!ok || !this.configured) return;
@@ -310,7 +398,7 @@ export class H265Player {
     }
     for (const nal of nals) parts.push(withStartCode(nal));
     const data = concatBytes(...parts);
-    const duration = this.lockFpsEnabled ? this.frameDurationUs : 33333;
+    const duration = this.lockFpsEnabled ? this.frameDurationUs : Math.round(1_000_000 / 20);
 
     try {
       const chunk = new EncodedVideoChunk({
@@ -336,23 +424,35 @@ export class H265Player {
         }
       }
       this.ctx.drawImage(frame, 0, 0);
-      this.frameCount += 1;
-      const now = performance.now();
-      if (!this.lastStatsAt) this.lastStatsAt = now;
-      if (now - this.lastStatsAt >= 1000) {
-        const fps = this.frameCount / ((now - this.lastStatsAt) / 1000);
-        this.frameCount = 0;
-        this.lastStatsAt = now;
-        if (typeof this.hooks.onStats === "function") {
-          this.hooks.onStats({
-            fps,
-            lockFpsEnabled: this.lockFpsEnabled,
-            lockFps: this.lockFps,
-          });
-        }
-      }
+      this._presentCount += 1;
+      this._maybeEmitStats();
     } finally {
       frame.close();
+    }
+  }
+
+  _maybeEmitStats() {
+    const now = performance.now();
+    if (!this.lastStatsAt) this.lastStatsAt = now;
+    if (now - this.lastStatsAt < 1000) return;
+    const dt = (now - this.lastStatsAt) / 1000;
+    const presentFps = this._presentCount / dt;
+    const decodeFps = this._decodeCount / dt;
+    const drops = this._statsWindowDrops;
+    this._presentCount = 0;
+    this._decodeCount = 0;
+    this._statsWindowDrops = 0;
+    this.lastStatsAt = now;
+    if (typeof this.hooks.onStats === "function") {
+      this.hooks.onStats({
+        fps: presentFps,
+        presentFps,
+        decodeFps,
+        drops,
+        dropTotal: this._dropCount,
+        lockFpsEnabled: this.lockFpsEnabled,
+        lockFps: this.lockFps,
+      });
     }
   }
 
@@ -383,6 +483,9 @@ export class H265Player {
     this.destroySocketOnly();
     this.buffer = new Uint8Array(0);
     this.pendingAccessUnit = [];
+    this.pendingHasVcl = false;
+    this.pendingIsKey = false;
+    this._decodeQueue = [];
     while (this._frameQueue.length) {
       const f = this._frameQueue.shift();
       try {
@@ -396,5 +499,6 @@ export class H265Player {
       this.decoder = null;
     }
     this.configured = false;
+    this._configPromise = null;
   }
 }

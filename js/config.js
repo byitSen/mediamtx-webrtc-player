@@ -5,7 +5,7 @@ function getDefaultSettings() {
     gridColumns: 2,
     maxActiveConnections: 8,
     lockFpsEnabled: true,
-    lockFps: 25,
+    lockFps: 20,
     cameras: [{ name: "摄像头1", rtspUrl: "rtsp://127.0.0.1:554/stream1" }],
     windowWidth: 1020,
     windowHeight: 820,
@@ -23,7 +23,7 @@ function getDefaultSettings() {
 function normalizeLockFps(settings) {
   const enabled = settings.lockFpsEnabled !== false;
   let fps = parseInt(settings.lockFps, 10);
-  if (!Number.isFinite(fps)) fps = 25;
+  if (!Number.isFinite(fps)) fps = 20;
   fps = Math.max(1, Math.min(60, fps));
   settings.lockFpsEnabled = enabled;
   settings.lockFps = fps;

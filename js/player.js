@@ -173,7 +173,7 @@ export class Player {
       const wsUrl = res.data;
       const cfg = getEffectiveSettings();
       const lockFpsEnabled = cfg.lockFpsEnabled !== false;
-      const lockFps = Math.max(1, Math.min(60, parseInt(cfg.lockFps, 10) || 25));
+      const lockFps = Math.max(1, Math.min(60, parseInt(cfg.lockFps, 10) || 20));
 
       this.h265 = new H265Player(this.dom.canvas, {
         lockFpsEnabled,
@@ -199,9 +199,12 @@ export class Player {
           this.dom.status.title = msg || "";
         },
         onFrame: ({ width, height }) => this._updateVideoWrapperAspectRatio(width, height),
-        onStats: ({ fps, lockFpsEnabled: locked, lockFps: target }) => {
-          const rate = fps ? fps.toFixed(1) : "-";
-          this.dom.statsText.textContent = locked ? `FPS: ${rate}（锁 ${target}）` : `FPS: ${rate}`;
+        onStats: ({ presentFps, decodeFps, drops, lockFpsEnabled: locked, lockFps: target }) => {
+          const p = presentFps != null ? presentFps.toFixed(1) : "-";
+          const d = decodeFps != null ? decodeFps.toFixed(1) : "-";
+          const drop = drops != null ? drops : 0;
+          const base = `出:${p} 解:${d} 丢:${drop}`;
+          this.dom.statsText.textContent = locked ? `${base}（锁 ${target}）` : base;
         },
       });
 

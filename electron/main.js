@@ -74,7 +74,7 @@ function createWindow() {
     height: 820,
     minWidth: 520,
     minHeight: 420,
-    title: "多窗口摄像头播放器",
+    title: "monitor-player",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,

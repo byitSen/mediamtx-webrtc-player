@@ -1,4 +1,4 @@
-# MediaMTX WebRTC Player（v2：本地 FFmpeg RTSP）
+# monitor-player（v2：本地 FFmpeg RTSP）
 
 桌面端（Electron）通过 **本地 FFmpeg** 拉取摄像头 RTSP（H.265 裸流），经本机 WebSocket 转发，再用 **WebCodecs** 硬解到 canvas 多窗口预览；支持统一时间戳一键截图、连接池与懒加载、Windows 内存触发截图等。
 

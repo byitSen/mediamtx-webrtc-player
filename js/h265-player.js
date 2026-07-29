@@ -1,7 +1,7 @@
 /**
  * H.265 AnnexB → WebCodecs VideoDecoder → canvas
+ * 支持按目标 FPS 锁定呈现，减轻网络/解码突发导致的画面抖动。
  */
-const START_CODE_3 = [0, 0, 1];
 const START_CODE_4 = [0, 0, 0, 1];
 
 function findStartCode(data, from = 0) {
@@ -22,12 +22,7 @@ function nalType(nal) {
 }
 
 function isKeyNal(type) {
-  // IDR_W_RADL=19, IDR_N_LP=20, CRA_NUT=21
   return type === 19 || type === 20 || type === 21;
-}
-
-function isParamNal(type) {
-  return type === 32 || type === 33 || type === 34; // VPS SPS PPS
 }
 
 function concatBytes(...parts) {
@@ -46,15 +41,32 @@ function withStartCode(nal) {
   return concatBytes(new Uint8Array(START_CODE_4), nal);
 }
 
+function clampFps(n, fallback = 25) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return fallback;
+  return Math.max(1, Math.min(60, Math.round(v)));
+}
+
 export class H265Player {
   /**
    * @param {HTMLCanvasElement} canvas
-   * @param {{ onStatus?: Function, onError?: Function, onFrame?: Function, onStats?: Function }} hooks
+   * @param {{
+   *   onStatus?: Function,
+   *   onError?: Function,
+   *   onFrame?: Function,
+   *   onStats?: Function,
+   *   lockFpsEnabled?: boolean,
+   *   lockFps?: number,
+   * }} hooks
    */
   constructor(canvas, hooks = {}) {
     this.canvas = canvas;
     this.ctx = canvas.getContext("2d");
     this.hooks = hooks;
+    this.lockFpsEnabled = !!hooks.lockFpsEnabled;
+    this.lockFps = clampFps(hooks.lockFps, 25);
+    this.frameDurationUs = Math.round(1_000_000 / this.lockFps);
+
     this.ws = null;
     this.decoder = null;
     this.buffer = new Uint8Array(0);
@@ -68,12 +80,38 @@ export class H265Player {
     this.pendingAccessUnit = [];
     this.pendingIsKey = false;
     this.timestampUs = 0;
+
+    /** @type {VideoFrame[]} */
+    this._frameQueue = [];
+    this._rafId = 0;
+    this._nextPresentAt = 0;
+    this._maxQueue = 3;
+  }
+
+  setLockFps(enabled, fps) {
+    this.lockFpsEnabled = !!enabled;
+    this.lockFps = clampFps(fps, this.lockFps || 25);
+    this.frameDurationUs = Math.round(1_000_000 / this.lockFps);
+    if (this.lockFpsEnabled) {
+      this._startPresentLoop();
+    } else {
+      this._stopPresentLoop();
+      // 解锁后尽快把队列里剩余帧渲完（只留最新一帧）
+      while (this._frameQueue.length > 1) {
+        const old = this._frameQueue.shift();
+        try {
+          old.close();
+        } catch (_) {}
+      }
+      if (this._frameQueue.length) this._presentNextFrame();
+    }
   }
 
   async play(wsUrl) {
     this.destroySocketOnly();
     this._ensureDecoder();
     this._emitStatus("connecting");
+    if (this.lockFpsEnabled) this._startPresentLoop();
 
     await new Promise((resolve, reject) => {
       let settled = false;
@@ -112,12 +150,63 @@ export class H265Player {
     if (this.decoder) return;
 
     this.decoder = new VideoDecoder({
-      output: (frame) => this._drawFrame(frame),
+      output: (frame) => this._onDecodedFrame(frame),
       error: (err) => {
         console.error("[H265Player] decoder error:", err);
         this._emitError(err?.message || "解码失败（请确认系统支持 HEVC 硬解）");
       },
     });
+  }
+
+  _onDecodedFrame(frame) {
+    if (this.destroyed) {
+      try {
+        frame.close();
+      } catch (_) {}
+      return;
+    }
+    if (!this.lockFpsEnabled) {
+      this._drawFrame(frame);
+      return;
+    }
+    this._frameQueue.push(frame);
+    while (this._frameQueue.length > this._maxQueue) {
+      const dropped = this._frameQueue.shift();
+      try {
+        dropped.close();
+      } catch (_) {}
+    }
+  }
+
+  _startPresentLoop() {
+    this._stopPresentLoop();
+    if (!this.lockFpsEnabled || this.lockFps <= 0) return;
+    const intervalMs = 1000 / this.lockFps;
+    this._nextPresentAt = performance.now();
+    const tick = (now) => {
+      if (this.destroyed || !this.lockFpsEnabled) return;
+      this._rafId = requestAnimationFrame(tick);
+      if (now < this._nextPresentAt) return;
+      this._nextPresentAt += intervalMs;
+      if (now - this._nextPresentAt > intervalMs * 2) {
+        this._nextPresentAt = now + intervalMs;
+      }
+      this._presentNextFrame();
+    };
+    this._rafId = requestAnimationFrame(tick);
+  }
+
+  _stopPresentLoop() {
+    if (this._rafId) {
+      cancelAnimationFrame(this._rafId);
+      this._rafId = 0;
+    }
+  }
+
+  _presentNextFrame() {
+    const frame = this._frameQueue.shift();
+    if (!frame) return;
+    this._drawFrame(frame);
   }
 
   _onBinary(chunk) {
@@ -126,7 +215,6 @@ export class H265Player {
   }
 
   _parseAnnexB() {
-    // Keep last incomplete NAL in buffer
     while (true) {
       const first = findStartCode(this.buffer, 0);
       if (!first) {
@@ -137,9 +225,7 @@ export class H265Player {
 
       const next = findStartCode(this.buffer, first.length);
       if (!next) {
-        // Need more data; keep from current start code
         if (this.buffer.length > 4 * 1024 * 1024) {
-          // Prevent unbounded growth on corrupt stream
           this.buffer = this.buffer.slice(-1024 * 1024);
         }
         return;
@@ -167,18 +253,16 @@ export class H265Player {
       return;
     }
 
-    // Access unit delimiter / SEI — ignore for AU assembly simplicity
     if (type === 35 || type === 39 || type === 40) return;
 
     const key = isKeyNal(type);
-    // Flush previous AU when a new VCL NAL starts a new picture (simplified: one VCL per AU)
     if (this.pendingAccessUnit.length) {
-      this._flushAccessUnit();
+      void this._flushAccessUnit();
     }
 
     this.pendingAccessUnit.push(nal);
     this.pendingIsKey = key;
-    this._flushAccessUnit();
+    void this._flushAccessUnit();
   }
 
   async _configureIfNeeded(isKey) {
@@ -195,7 +279,6 @@ export class H265Player {
         const config = {
           codec,
           optimizeForLatency: true,
-          // hev1: in-band parameter sets
         };
         const support = await VideoDecoder.isConfigSupported(config);
         if (!support?.supported) continue;
@@ -219,7 +302,6 @@ export class H265Player {
 
     const ok = await this._configureIfNeeded(isKey);
     if (!ok || !this.configured) return;
-
     if (this.decoder.state === "closed") return;
 
     const parts = [];
@@ -228,15 +310,16 @@ export class H265Player {
     }
     for (const nal of nals) parts.push(withStartCode(nal));
     const data = concatBytes(...parts);
+    const duration = this.lockFpsEnabled ? this.frameDurationUs : 33333;
 
     try {
       const chunk = new EncodedVideoChunk({
         type: isKey ? "key" : "delta",
         timestamp: this.timestampUs,
-        duration: 33333,
+        duration,
         data,
       });
-      this.timestampUs += 33333;
+      this.timestampUs += duration;
       this.decoder.decode(chunk);
     } catch (e) {
       console.warn("[H265Player] decode:", e?.message || e);
@@ -261,7 +344,11 @@ export class H265Player {
         this.frameCount = 0;
         this.lastStatsAt = now;
         if (typeof this.hooks.onStats === "function") {
-          this.hooks.onStats({ fps });
+          this.hooks.onStats({
+            fps,
+            lockFpsEnabled: this.lockFpsEnabled,
+            lockFps: this.lockFps,
+          });
         }
       }
     } finally {
@@ -292,9 +379,16 @@ export class H265Player {
 
   destroy() {
     this.destroyed = true;
+    this._stopPresentLoop();
     this.destroySocketOnly();
     this.buffer = new Uint8Array(0);
     this.pendingAccessUnit = [];
+    while (this._frameQueue.length) {
+      const f = this._frameQueue.shift();
+      try {
+        f.close();
+      } catch (_) {}
+    }
     if (this.decoder) {
       try {
         if (this.decoder.state !== "closed") this.decoder.close();

@@ -171,14 +171,19 @@ export class Player {
       }
       this.proxyRtspUrl = rtspUrl;
       const wsUrl = res.data;
+      const cfg = getEffectiveSettings();
+      const lockFpsEnabled = cfg.lockFpsEnabled !== false;
+      const lockFps = Math.max(1, Math.min(60, parseInt(cfg.lockFps, 10) || 25));
 
       this.h265 = new H265Player(this.dom.canvas, {
+        lockFpsEnabled,
+        lockFps,
         onStatus: (s) => {
           if (s === "online") {
             this.isConnected = true;
             this.reconnectAttempts = 0;
             this.setStatus("online");
-            this.dom.statsText.textContent = "解码中…";
+            this.dom.statsText.textContent = lockFpsEnabled ? `解码中…（锁 ${lockFps}fps）` : "解码中…";
           } else if (s === "connecting") {
             this.setStatus("connecting");
           } else if (s === "offline") {
@@ -194,8 +199,9 @@ export class Player {
           this.dom.status.title = msg || "";
         },
         onFrame: ({ width, height }) => this._updateVideoWrapperAspectRatio(width, height),
-        onStats: ({ fps }) => {
-          this.dom.statsText.textContent = `FPS: ${fps ? fps.toFixed(1) : "-"}`;
+        onStats: ({ fps, lockFpsEnabled: locked, lockFps: target }) => {
+          const rate = fps ? fps.toFixed(1) : "-";
+          this.dom.statsText.textContent = locked ? `FPS: ${rate}（锁 ${target}）` : `FPS: ${rate}`;
         },
       });
 

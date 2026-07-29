@@ -1,6 +1,6 @@
 {
-  "name": "mediamtx-webrtc-player",
-  "version": "2.0.0",
+  "name": "monitor-player",
+  "version": "2.1.0",
   "private": true,
   "main": "electron/main.js",
   "scripts": {
@@ -23,8 +23,8 @@
     "ws": "^8.18.0"
   },
   "build": {
-    "appId": "com.mediamtx.webrtc-player",
-    "productName": "MediaMTX WebRTC Player",
+    "appId": "com.monitor.player",
+    "productName": "monitor-player",
     "directories": {
       "output": "release"
     },

@@ -1,23 +1,26 @@
 {
   "name": "mediamtx-webrtc-player",
-  "version": "1.2.1",
+  "version": "2.0.0",
   "private": true,
   "main": "electron/main.js",
   "scripts": {
     "dev": "npx serve . -p 8000",
     "start": "npx electron .",
     "start:dev": "cross-env NODE_ENV=development npx electron .",
+    "download-ffmpeg": "node scripts/download-ffmpeg.js",
+    "prebuild": "npm run download-ffmpeg",
     "build": "electron-builder",
     "build:win": "electron-builder --win",
     "build:mac": "electron-builder --mac"
   },
   "devDependencies": {
     "cross-env": "^7.0.3",
-    "electron": "^36.0.0",
+    "electron": "^43.2.0",
     "electron-builder": "^25.0.0"
   },
   "dependencies": {
-    "koffi": "^2.16.3"
+    "koffi": "^2.16.3",
+    "ws": "^8.18.0"
   },
   "build": {
     "appId": "com.mediamtx.webrtc-player",
@@ -30,6 +33,15 @@
       "css/**",
       "js/**",
       "electron/**"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/ffmpeg/${os}",
+        "to": "ffmpeg/${os}",
+        "filter": [
+          "**/*"
+        ]
+      }
     ],
     "asarUnpack": [
       "**/node_modules/koffi/**"

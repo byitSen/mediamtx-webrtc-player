@@ -15,9 +15,9 @@ const observer = new IntersectionObserver(
           player.setStatus("not_ready", "连接池已满，暂不拉流");
         }
       } else {
-        // 滚出视口，释放连接并归还配额
+        // 滚出视口，释放连接并归还配额（destroy 代理以控制 FFmpeg 进程数）
         deactivate(player);
-        player.closePeer();
+        Promise.resolve(player.closePeer()).catch(() => {});
       }
     });
   },

@@ -13,6 +13,9 @@ export function applyGridColumns(gridEl, n) {
 export function initPlayers(gridEl, camerasFromArg) {
   playerInstances.forEach((p) => p.destroy());
   playerInstances.length = 0;
+  if (typeof window !== "undefined" && window.electronAPI?.destroyAllRtspProxies) {
+    window.electronAPI.destroyAllRtspProxies().catch(() => {});
+  }
   if (!gridEl) return;
   gridEl.innerHTML = "";
 

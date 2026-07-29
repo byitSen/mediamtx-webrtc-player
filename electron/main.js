@@ -3,16 +3,20 @@ const path = require("path");
 const fs = require("fs");
 const http = require("http");
 const { stopMemoryWatch, updateMemoryWatch, setMemoryWatchLogger } = require("./memory-watch");
+const { registerRtspProxyIpc, proxyManager } = require("./ipc-rtsp-proxy");
 
-// Chromium 136+ WebRTC H.265：启用解码并在 SDP 中协商 H.265，便于直接播 H.265 源
-app.commandLine.appendSwitch("enable-features", "HevcVideoDecoder,WebRtcAllowH265Receive,WebRtcAllowH265Send");
+// HEVC / WebCodecs 硬解 +（兼容）WebRTC H.265 相关特性
+app.commandLine.appendSwitch(
+  "enable-features",
+  "PlatformHEVCDecoderSupport,HevcVideoDecoder,WebRtcAllowH265Receive,WebRtcAllowH265Send"
+);
 
 // 设置安全的 Content-Security-Policy，消除 Electron 安全警告（禁止 unsafe-eval）
 const csp = [
   "default-src 'self'",
   "script-src 'self'",
   "style-src 'self' 'unsafe-inline'",
-  "connect-src 'self' http: https: wss:",
+  "connect-src 'self' http: https: ws: wss:",
   "media-src 'self' blob:",
   "img-src 'self' data: blob:",
 ].join("; ");
@@ -70,7 +74,7 @@ function createWindow() {
     height: 820,
     minWidth: 520,
     minHeight: 420,
-    title: "MediaMTX WebRTC 多窗口摄像头播放器",
+    title: "多窗口摄像头播放器",
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
       contextIsolation: true,
@@ -92,6 +96,9 @@ function createWindow() {
 
   mainWindow.on("closed", () => {
     stopMemoryWatch();
+    try {
+      proxyManager.destroyAll();
+    } catch (_) {}
     mainWindow = null;
     if (staticServer) {
       staticServer.close();
@@ -123,6 +130,7 @@ app.whenReady().then(() => {
       },
     });
   });
+  registerRtspProxyIpc();
   createWindow();
 });
 
@@ -220,6 +228,9 @@ ipcMain.handle("configure-memory-watch", (_, config) => {
 
 app.on("will-quit", () => {
   stopMemoryWatch();
+  try {
+    proxyManager.destroyAll();
+  } catch (_) {}
   if (currentScreenshotAccelerator) {
     try {
       globalShortcut.unregister(currentScreenshotAccelerator);

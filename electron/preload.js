@@ -16,5 +16,8 @@ contextBridge.exposeInMainWorld("electronAPI", {
   registerScreenshotShortcut: (accelerator) => ipcRenderer.invoke("register-screenshot-shortcut", accelerator),
   configureMemoryWatch: (cfg) => ipcRenderer.invoke("configure-memory-watch", cfg),
   getAppVersion: () => ipcRenderer.invoke("get-app-version"),
+  createRtspProxy: (rtspUrl) => ipcRenderer.invoke("rtsp-proxy:create", rtspUrl),
+  destroyRtspProxy: (rtspUrl) => ipcRenderer.invoke("rtsp-proxy:destroy", rtspUrl),
+  destroyAllRtspProxies: () => ipcRenderer.invoke("rtsp-proxy:destroy-all"),
   platform: process.platform,
 });

@@ -204,6 +204,11 @@ main {
   image-rendering: -webkit-optimize-contrast;
 }
 
+.player-canvas {
+  display: block;
+  object-fit: cover;
+}
+
 .player-footer {
   display: flex;
   align-items: center;
@@ -408,7 +413,7 @@ main {
 
 .camera-row {
   display: grid;
-  grid-template-columns: 1.4fr 1.6fr auto;
+  grid-template-columns: 1fr 2.4fr auto;
   gap: 6px;
 }
 

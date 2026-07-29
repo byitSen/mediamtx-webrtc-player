@@ -45,11 +45,10 @@ const settingsOverlay = document.getElementById("settingsOverlay");
 const settingsCloseBtn = document.getElementById("settingsCloseBtn");
 const settingsCancelBtn = document.getElementById("settingsCancelBtn");
 const settingsSaveBtn = document.getElementById("settingsSaveBtn");
-  const settingWebrtcBase = document.getElementById("settingWebrtcBase");
-  const settingGridColumns = document.getElementById("settingGridColumns");
-  const settingMaxActive = document.getElementById("settingMaxActive");
-  const settingCamerasList = document.getElementById("settingCamerasList");
-  const settingAddCamera = document.getElementById("settingAddCamera");
+const settingGridColumns = document.getElementById("settingGridColumns");
+const settingMaxActive = document.getElementById("settingMaxActive");
+const settingCamerasList = document.getElementById("settingCamerasList");
+const settingAddCamera = document.getElementById("settingAddCamera");
 const settingsBtn = document.getElementById("settingsBtn");
 
 const settingWindowSizeSection = document.getElementById("settingWindowSizeSection");
@@ -78,7 +77,7 @@ const WINDOW_WIDTH_MAX = 3840;
 const WINDOW_HEIGHT_MIN = 420;
 const WINDOW_HEIGHT_MAX = 2160;
 
-function renderCameraRow(name = "", path = "", index = 0) {
+function renderCameraRow(name = "", rtspUrl = "", index = 0) {
   if (!settingCamerasList) return;
   const row = document.createElement("div");
   row.className = "camera-row";
@@ -89,10 +88,10 @@ function renderCameraRow(name = "", path = "", index = 0) {
   nameInput.placeholder = "名称";
   nameInput.value = name;
 
-  const pathInput = document.createElement("input");
-  pathInput.type = "text";
-  pathInput.placeholder = "流路径，如 cam1";
-  pathInput.value = path;
+  const urlInput = document.createElement("input");
+  urlInput.type = "text";
+  urlInput.placeholder = "rtsp://127.0.0.1:554/stream1";
+  urlInput.value = rtspUrl;
 
   const removeBtn = document.createElement("button");
   removeBtn.type = "button";
@@ -101,7 +100,7 @@ function renderCameraRow(name = "", path = "", index = 0) {
   removeBtn.addEventListener("click", () => row.remove());
 
   row.appendChild(nameInput);
-  row.appendChild(pathInput);
+  row.appendChild(urlInput);
   row.appendChild(removeBtn);
   settingCamerasList.appendChild(row);
 }
@@ -183,18 +182,19 @@ function openSettings() {
   settingsOverlay.setAttribute("aria-hidden", "false");
 
   const cfg = getEffectiveSettings();
-  const webrtcBase = cfg.webrtcBase || "http://localhost:8889";
   const gridColumns = cfg.gridColumns || 2;
-  const maxActive = cfg.maxActiveConnections || 8;
-  const cameras = cfg.cameras && cfg.cameras.length ? cfg.cameras : [{ name: "摄像头1", path: "cam1" }];
+  const maxActive = Math.min(16, cfg.maxActiveConnections || 8);
+  const cameras =
+    cfg.cameras && cfg.cameras.length
+      ? cfg.cameras
+      : [{ name: "摄像头1", rtspUrl: "rtsp://127.0.0.1:554/stream1" }];
 
-  if (settingWebrtcBase) settingWebrtcBase.value = webrtcBase;
   if (settingGridColumns) settingGridColumns.value = String(gridColumns);
   if (settingMaxActive) settingMaxActive.value = String(maxActive);
 
   if (settingCamerasList) {
     settingCamerasList.innerHTML = "";
-    cameras.forEach((c, i) => renderCameraRow(c.name, c.path, i));
+    cameras.forEach((c, i) => renderCameraRow(c.name, c.rtspUrl || "", i));
   }
 
   const winW = Math.max(WINDOW_WIDTH_MIN, Math.min(WINDOW_WIDTH_MAX, cfg.windowWidth ?? 1020));
@@ -280,15 +280,14 @@ function saveSettingsFromForm() {
   settingCamerasList?.querySelectorAll(".camera-row").forEach((row) => {
     const inputs = row.querySelectorAll("input");
     const name = (inputs[0]?.value || "").trim();
-    const path = (inputs[1]?.value || "").trim();
-    if (path) cameras.push({ name: name || "未命名", path });
+    const rtspUrl = (inputs[1]?.value || "").trim();
+    if (rtspUrl) cameras.push({ name: name || "未命名", rtspUrl });
   });
-  if (!cameras.length) cameras.push({ name: "摄像头1", path: "cam1" });
+  if (!cameras.length) cameras.push({ name: "摄像头1", rtspUrl: "rtsp://127.0.0.1:554/stream1" });
 
   const current = loadSettings();
-  const webrtcBase = (settingWebrtcBase?.value || "").trim() || "http://localhost:8889";
   const gridColumns = Math.max(1, Math.min(4, parseInt(settingGridColumns?.value || "2", 10) || 2));
-  const maxActive = Math.max(1, Math.min(64, parseInt(settingMaxActive?.value || "8", 10) || 8));
+  const maxActive = Math.max(1, Math.min(16, parseInt(settingMaxActive?.value || "8", 10) || 8));
   const windowWidth = Math.max(WINDOW_WIDTH_MIN, Math.min(WINDOW_WIDTH_MAX, parseInt(settingWindowWidth?.value || "1020", 10) || 1020));
   const windowHeight = Math.max(WINDOW_HEIGHT_MIN, Math.min(WINDOW_HEIGHT_MAX, parseInt(settingWindowHeight?.value || "820", 10) || 820));
   const fullscreenWidth = Math.max(WINDOW_WIDTH_MIN, Math.min(WINDOW_WIDTH_MAX, parseInt(settingFullscreenWidth?.value || "1240", 10) || 1240));
@@ -306,7 +305,6 @@ function saveSettingsFromForm() {
 
   const next = {
     ...current,
-    webrtcBase,
     cameras,
     gridColumns,
     maxActiveConnections: maxActive,
@@ -321,6 +319,7 @@ function saveSettingsFromForm() {
     memoryWatchPointerSize,
     memoryWatchOffsets,
   };
+  delete next.webrtcBase;
   saveSettings(next);
 
   if (isElectronEnv()) {
@@ -414,7 +413,7 @@ function updateSaveDirDisplay() {
         : "在设置中选择保存目录后，使用一键截图。";
     } else {
       saveDirDisplay.textContent =
-        "浏览器环境下截图保存到下载目录，文件名中包含日期/时间/摄像头名称与统一时间戳。";
+        "浏览器环境无法本地拉 RTSP，请使用桌面版；截图仍可保存到下载目录。";
     }
   }
   const settingSaveDirPath = document.getElementById("settingSaveDirPath");

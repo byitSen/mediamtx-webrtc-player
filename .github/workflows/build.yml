@@ -29,6 +29,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Download FFmpeg
+        run: npm run download-ffmpeg
+
       - name: Build Electron
         run: npm run build
         env:

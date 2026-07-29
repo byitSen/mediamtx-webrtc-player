@@ -5,6 +5,9 @@ node_modules/
 dist/
 release/
 
+# FFmpeg binaries (downloaded by scripts/download-ffmpeg.js)
+resources/ffmpeg/
+
 # IDE / OS
 .DS_Store
 *.log

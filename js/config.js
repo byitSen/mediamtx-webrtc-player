@@ -2,10 +2,9 @@ const STORAGE_KEY = "mediamtx-webrtc-player-settings";
 
 function getDefaultSettings() {
   return {
-    webrtcBase: "http://localhost:8889",
     gridColumns: 2,
     maxActiveConnections: 8,
-    cameras: [{ name: "摄像头1", path: "cam1" }],
+    cameras: [{ name: "摄像头1", rtspUrl: "rtsp://127.0.0.1:554/stream1" }],
     windowWidth: 1020,
     windowHeight: 820,
     fullscreenWidth: 1240,
@@ -19,12 +18,27 @@ function getDefaultSettings() {
   };
 }
 
+function migrateCameras(cameras) {
+  if (!Array.isArray(cameras)) return getDefaultSettings().cameras;
+  return cameras.map((c) => {
+    const name = c?.name || "未命名";
+    const rtspUrl = (c?.rtspUrl || "").trim();
+    if (rtspUrl) return { name, rtspUrl };
+    // 旧版 path 仅作显示后备，无法直接播放
+    const path = (c?.path || "").trim();
+    return { name, rtspUrl: path.startsWith("rtsp") ? path : "", path: path || undefined };
+  });
+}
+
 export function loadSettings() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return getDefaultSettings();
     const parsed = JSON.parse(raw);
-    return { ...getDefaultSettings(), ...parsed };
+    const merged = { ...getDefaultSettings(), ...parsed };
+    merged.cameras = migrateCameras(merged.cameras);
+    if (merged.maxActiveConnections > 16) merged.maxActiveConnections = 16;
+    return merged;
   } catch (e) {
     console.warn("loadSettings error", e);
     return getDefaultSettings();
@@ -41,9 +55,4 @@ export function saveSettings(settings) {
 
 export function getEffectiveSettings() {
   return loadSettings();
-}
-
-export function buildWhepUrl(webrtcBase, cameraPath) {
-  const base = (webrtcBase || "").replace(/\/$/, "");
-  return `${base}/${cameraPath}/whep`;
 }

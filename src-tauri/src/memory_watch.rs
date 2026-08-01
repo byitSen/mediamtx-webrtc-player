@@ -25,7 +25,7 @@ pub struct MemoryWatchConfig {
     pub trigger_value: Option<i32>,
 }
 
-#[derive(Clone, Default)]
+#[derive(Clone)]
 pub struct MemoryWatchState {
     #[cfg(windows)]
     inner: Arc<Mutex<WatchInner>>,
@@ -53,7 +53,7 @@ impl MemoryWatchState {
         }
         #[cfg(not(windows))]
         {
-            Self::default()
+            Self {}
         }
     }
 }

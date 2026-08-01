@@ -9,6 +9,11 @@ function cameraId(camera) {
   return camera?.rtspUrl || camera?.path || camera?.id || camera?.name || "";
 }
 
+/** 进入全屏前的主窗口尺寸（全局只记一次，避免切画面后被屏幕尺寸覆盖） */
+let preFullscreenWindowSize = null;
+/** 当前处于应用内全屏的 Player */
+let activeFullscreenPlayer = null;
+
 export class Player {
   constructor(containerEl, cameraConfig) {
     this.containerEl = containerEl;
@@ -19,6 +24,7 @@ export class Player {
     this.reconnectTimer = null;
     this.reconnectAttempts = 0;
     this.statsTimer = null;
+    this.containerEl.__playerInstance = this;
     this._buildDom();
     this._bindEvents();
   }
@@ -255,121 +261,149 @@ export class Player {
     }
   }
 
+  /** 仅退出本卡片全屏 UI（不改窗口尺寸） */
+  _exitFullscreenUiOnly() {
+    const card = this.containerEl;
+    const media = this.dom?.video;
+    if (!card?.classList.contains("fullscreen-mode") && !this._fullscreenPlaceholder) {
+      return;
+    }
+    card.classList.remove("fullscreen-mode");
+    card.style.cursor = "";
+    if (this._fullscreenPlaceholder?.parentNode) {
+      this._fullscreenPlaceholder.parentNode.insertBefore(card, this._fullscreenPlaceholder);
+      this._fullscreenPlaceholder.remove();
+    }
+    this._fullscreenPlaceholder = null;
+    if (this._fullscreenWheelHandler) {
+      card.removeEventListener("wheel", this._fullscreenWheelHandler, { passive: false });
+      this._fullscreenWheelHandler = null;
+    }
+    if (this._fullscreenDragHandlers) {
+      card.removeEventListener("mousedown", this._fullscreenDragHandlers.down);
+      document.removeEventListener("mousemove", this._fullscreenDragHandlers.move);
+      document.removeEventListener("mouseup", this._fullscreenDragHandlers.up);
+      document.removeEventListener("mouseleave", this._fullscreenDragHandlers.leave);
+      this._fullscreenDragHandlers = null;
+    }
+    if (media) media.style.transform = "";
+    this.fullscreenZoom = 1;
+    this.fullscreenPan = { x: 0, y: 0 };
+    if (activeFullscreenPlayer === this) activeFullscreenPlayer = null;
+  }
+
+  async _restorePreFullscreenWindow() {
+    const api = typeof window !== "undefined" && window.electronAPI;
+    if (!api?.setWindowSize || !preFullscreenWindowSize) return;
+    const { width, height } = preFullscreenWindowSize;
+    preFullscreenWindowSize = null;
+    try {
+      await api.setWindowSize(width, height);
+    } catch (e) {
+      console.warn("restore window size:", e);
+    }
+  }
+
+  async _applyScreenFullscreenWindow() {
+    const api = typeof window !== "undefined" && window.electronAPI;
+    if (!api?.setWindowSize) return;
+    try {
+      // 仅在首次进入全屏时记录原窗口尺寸
+      if (!preFullscreenWindowSize && api.getWindowSize) {
+        const size = await api.getWindowSize();
+        if (size?.width && size?.height) {
+          preFullscreenWindowSize = { width: size.width, height: size.height };
+        }
+      }
+      let fw = 0;
+      let fh = 0;
+      let sx = null;
+      let sy = null;
+      if (api.getScreenSize) {
+        const screen = await api.getScreenSize();
+        if (screen?.width && screen?.height) {
+          fw = screen.width;
+          fh = screen.height;
+          if (typeof screen.x === "number") sx = screen.x;
+          if (typeof screen.y === "number") sy = screen.y;
+        }
+      }
+      if (!fw || !fh) {
+        fw = Math.max(520, window.screen?.availWidth || window.screen?.width || 1920);
+        fh = Math.max(420, window.screen?.availHeight || window.screen?.height || 1080);
+      }
+      if (api.setWindowPosition && sx != null && sy != null) {
+        try {
+          await api.setWindowPosition(sx, sy);
+        } catch (_) {}
+      }
+      await api.setWindowSize(fw, fh);
+    } catch (e) {
+      console.warn("set fullscreen window size:", e);
+    }
+  }
+
   async toggleFullscreenInApp() {
     const card = this.containerEl;
     const isFull = card.classList.contains("fullscreen-mode");
-    const media = this.dom.video;
-    const api = typeof window !== "undefined" && window.electronAPI;
 
     if (isFull) {
-      card.classList.remove("fullscreen-mode");
+      this._exitFullscreenUiOnly();
       document.body.classList.remove("app-player-fullscreen");
       document.documentElement.style.removeProperty("--app-top-bar-height");
       document.body.style.overflow = "";
-      card.style.cursor = "";
-      // 移回网格原位
-      if (this._fullscreenPlaceholder?.parentNode) {
-        this._fullscreenPlaceholder.parentNode.insertBefore(card, this._fullscreenPlaceholder);
-        this._fullscreenPlaceholder.remove();
-      }
-      this._fullscreenPlaceholder = null;
-      if (this._fullscreenWheelHandler) {
-        card.removeEventListener("wheel", this._fullscreenWheelHandler, { passive: false });
-        this._fullscreenWheelHandler = null;
-      }
-      if (this._fullscreenDragHandlers) {
-        card.removeEventListener("mousedown", this._fullscreenDragHandlers.down);
-        document.removeEventListener("mousemove", this._fullscreenDragHandlers.move);
-        document.removeEventListener("mouseup", this._fullscreenDragHandlers.up);
-        document.removeEventListener("mouseleave", this._fullscreenDragHandlers.leave);
-        this._fullscreenDragHandlers = null;
-      }
-      if (media) media.style.transform = "";
-      this.fullscreenZoom = 1;
-      this.fullscreenPan = { x: 0, y: 0 };
-      if (api?.setWindowSize && this._savedWindowSize) {
-        const { width, height } = this._savedWindowSize;
-        try {
-          await api.setWindowSize(width, height);
-        } catch (e) {
-          console.warn("restore window size:", e);
-        }
-        this._savedWindowSize = null;
-      }
-    } else {
-      // 退出其他卡片的全屏
-      document.querySelectorAll(".player-card.fullscreen-mode").forEach((el) => {
-        if (el !== card) el.classList.remove("fullscreen-mode");
-      });
-
-      // 挂到 body，避免 main/grid 的 overflow 影响 fixed 铺满
-      if (!this._fullscreenPlaceholder) {
-        this._fullscreenPlaceholder = document.createComment("player-fullscreen-anchor");
-        card.parentNode?.insertBefore(this._fullscreenPlaceholder, card);
-        document.body.appendChild(card);
-      }
-
-      this.fullscreenZoom = 1;
-      this.fullscreenPan = { x: 0, y: 0 };
-      this._fullscreenWheelHandler = (e) => this._onFullscreenWheel(e);
-      card.addEventListener("wheel", this._fullscreenWheelHandler, { passive: false });
-      this._fullscreenDragHandlers = {
-        down: (e) => this._onFullscreenDragStart(e),
-        move: (e) => this._onFullscreenDragMove(e),
-        up: () => this._onFullscreenDragEnd(),
-        leave: (e) => {
-          if (e.target === document) this._onFullscreenDragEnd();
-        },
-      };
-      card.addEventListener("mousedown", this._fullscreenDragHandlers.down);
-      document.addEventListener("mousemove", this._fullscreenDragHandlers.move);
-      document.addEventListener("mouseup", this._fullscreenDragHandlers.up);
-      document.addEventListener("mouseleave", this._fullscreenDragHandlers.leave);
-      card.style.cursor = "grab";
-      this._applyFullscreenTransform();
-      card.classList.add("fullscreen-mode");
-      document.body.classList.add("app-player-fullscreen");
-      document.body.style.overflow = "hidden";
-      // 顶栏高度：全屏卡片从顶栏下方开始，不遮挡截图/设置等按钮
-      const topBar = document.querySelector(".top-bar");
-      const topH = topBar ? Math.ceil(topBar.getBoundingClientRect().height) : 52;
-      document.documentElement.style.setProperty("--app-top-bar-height", `${topH}px`);
-
-      if (api?.getWindowSize && api.setWindowSize) {
-        try {
-          const size = await api.getWindowSize();
-          if (size) {
-            this._savedWindowSize = { width: size.width, height: size.height };
-          }
-          // 全屏尺寸 = 当前显示器屏幕尺寸
-          let fw = 0;
-          let fh = 0;
-          let sx = null;
-          let sy = null;
-          if (api.getScreenSize) {
-            const screen = await api.getScreenSize();
-            if (screen?.width && screen?.height) {
-              fw = screen.width;
-              fh = screen.height;
-              if (typeof screen.x === "number") sx = screen.x;
-              if (typeof screen.y === "number") sy = screen.y;
-            }
-          }
-          if (!fw || !fh) {
-            fw = Math.max(520, window.screen?.availWidth || window.screen?.width || 1920);
-            fh = Math.max(420, window.screen?.availHeight || window.screen?.height || 1080);
-          }
-          if (api.setWindowPosition && sx != null && sy != null) {
-            try {
-              await api.setWindowPosition(sx, sy);
-            } catch (_) {}
-          }
-          await api.setWindowSize(fw, fh);
-        } catch (e) {
-          console.warn("set fullscreen window size:", e);
-        }
-      }
+      await this._restorePreFullscreenWindow();
+      return;
     }
+
+    // 切换到另一路：先卸掉上一张的全屏 UI，保留已放大的窗口与原尺寸记录
+    if (activeFullscreenPlayer && activeFullscreenPlayer !== this) {
+      activeFullscreenPlayer._exitFullscreenUiOnly();
+    } else {
+      document.querySelectorAll(".player-card.fullscreen-mode").forEach((el) => {
+        if (el === card) return;
+        const other = el.__playerInstance;
+        if (other && typeof other._exitFullscreenUiOnly === "function") {
+          other._exitFullscreenUiOnly();
+        } else {
+          el.classList.remove("fullscreen-mode");
+        }
+      });
+    }
+
+    if (!this._fullscreenPlaceholder) {
+      this._fullscreenPlaceholder = document.createComment("player-fullscreen-anchor");
+      card.parentNode?.insertBefore(this._fullscreenPlaceholder, card);
+      document.body.appendChild(card);
+    }
+
+    this.fullscreenZoom = 1;
+    this.fullscreenPan = { x: 0, y: 0 };
+    this._fullscreenWheelHandler = (e) => this._onFullscreenWheel(e);
+    card.addEventListener("wheel", this._fullscreenWheelHandler, { passive: false });
+    this._fullscreenDragHandlers = {
+      down: (e) => this._onFullscreenDragStart(e),
+      move: (e) => this._onFullscreenDragMove(e),
+      up: () => this._onFullscreenDragEnd(),
+      leave: (e) => {
+        if (e.target === document) this._onFullscreenDragEnd();
+      },
+    };
+    card.addEventListener("mousedown", this._fullscreenDragHandlers.down);
+    document.addEventListener("mousemove", this._fullscreenDragHandlers.move);
+    document.addEventListener("mouseup", this._fullscreenDragHandlers.up);
+    document.addEventListener("mouseleave", this._fullscreenDragHandlers.leave);
+    card.style.cursor = "grab";
+    this._applyFullscreenTransform();
+    card.classList.add("fullscreen-mode");
+    document.body.classList.add("app-player-fullscreen");
+    document.body.style.overflow = "hidden";
+    const topBar = document.querySelector(".top-bar");
+    const topH = topBar ? Math.ceil(topBar.getBoundingClientRect().height) : 52;
+    document.documentElement.style.setProperty("--app-top-bar-height", `${topH}px`);
+    activeFullscreenPlayer = this;
+
+    await this._applyScreenFullscreenWindow();
   }
 
   _applyFullscreenTransform() {
@@ -451,21 +485,20 @@ export class Player {
   }
 
   destroy() {
-    if (this.containerEl?.classList.contains("fullscreen-mode")) {
+    if (this.containerEl?.classList.contains("fullscreen-mode") || this._fullscreenPlaceholder) {
       try {
-        this.containerEl.classList.remove("fullscreen-mode");
-        document.body.classList.remove("app-player-fullscreen");
-        document.documentElement.style.removeProperty("--app-top-bar-height");
-        if (this._fullscreenPlaceholder?.parentNode) {
-          this._fullscreenPlaceholder.parentNode.insertBefore(
-            this.containerEl,
-            this._fullscreenPlaceholder
-          );
-          this._fullscreenPlaceholder.remove();
+        this._exitFullscreenUiOnly();
+        if (!document.querySelector(".player-card.fullscreen-mode")) {
+          document.body.classList.remove("app-player-fullscreen");
+          document.documentElement.style.removeProperty("--app-top-bar-height");
+          document.body.style.overflow = "";
+          void this._restorePreFullscreenWindow();
         }
       } catch (_) {}
-      this._fullscreenPlaceholder = null;
     }
+    try {
+      delete this.containerEl.__playerInstance;
+    } catch (_) {}
     this.clearReconnectTimer();
     this.stopStatsTimer();
     void this.closePeer();

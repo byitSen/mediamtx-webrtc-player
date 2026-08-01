@@ -1,10 +1,14 @@
 //! Windows memory watch (pointer-chain). Non-Windows: unsupported stub.
 
-use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::Arc;
 use tauri::AppHandle;
+
+#[cfg(windows)]
+use parking_lot::Mutex;
+#[cfg(windows)]
+use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(windows)]
+use std::sync::Arc;
 #[cfg(windows)]
 use tauri::Emitter;
 
@@ -21,12 +25,15 @@ pub struct MemoryWatchConfig {
     pub trigger_value: Option<i32>,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct MemoryWatchState {
+    #[cfg(windows)]
     inner: Arc<Mutex<WatchInner>>,
+    #[cfg(windows)]
     generation: Arc<AtomicU64>,
 }
 
+#[cfg(windows)]
 struct WatchInner {
     stop: bool,
     config: Option<MemoryWatchConfig>,
@@ -34,16 +41,24 @@ struct WatchInner {
 
 impl MemoryWatchState {
     pub fn new() -> Self {
-        Self {
-            inner: Arc::new(Mutex::new(WatchInner {
-                stop: false,
-                config: None,
-            })),
-            generation: Arc::new(AtomicU64::new(0)),
+        #[cfg(windows)]
+        {
+            Self {
+                inner: Arc::new(Mutex::new(WatchInner {
+                    stop: false,
+                    config: None,
+                })),
+                generation: Arc::new(AtomicU64::new(0)),
+            }
+        }
+        #[cfg(not(windows))]
+        {
+            Self::default()
         }
     }
 }
 
+#[cfg(windows)]
 #[derive(Serialize, Clone)]
 #[serde(rename_all = "camelCase")]
 struct LogEntry {
@@ -136,6 +151,7 @@ pub fn update_memory_watch(
     }
 }
 
+#[cfg(windows)]
 fn now_ms() -> u64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -143,6 +159,7 @@ fn now_ms() -> u64 {
         .unwrap_or(0)
 }
 
+#[cfg(windows)]
 fn parse_offset(s: &str) -> u32 {
     let t = s.trim();
     if t.is_empty() {

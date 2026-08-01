@@ -148,7 +148,7 @@ fn windows_poll_loop(
         CreateToolhelp32Snapshot, Module32FirstW, Module32NextW, Process32FirstW, Process32NextW,
         MODULEENTRY32W, PROCESSENTRY32W, TH32CS_SNAPMODULE, TH32CS_SNAPMODULE32, TH32CS_SNAPPROCESS,
     };
-    use windows::Win32::System::Memory::ReadProcessMemory;
+    use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
     use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
 
     let emit = |level: &str, msg: String| {
@@ -353,7 +353,7 @@ fn is_wow64(_handle: windows::Win32::Foundation::HANDLE) -> bool {
 
 #[cfg(windows)]
 fn read_ptr(handle: windows::Win32::Foundation::HANDLE, addr: u64, width: u8) -> Option<u64> {
-    use windows::Win32::System::Memory::ReadProcessMemory;
+    use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
     unsafe {
         if width == 4 {
             let mut v = 0u32;
@@ -391,7 +391,7 @@ fn read_ptr(handle: windows::Win32::Foundation::HANDLE, addr: u64, width: u8) ->
 
 #[cfg(windows)]
 fn read_i32(handle: windows::Win32::Foundation::HANDLE, addr: u64) -> Option<i32> {
-    use windows::Win32::System::Memory::ReadProcessMemory;
+    use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
     unsafe {
         let mut v = 0i32;
         let mut read = 0usize;

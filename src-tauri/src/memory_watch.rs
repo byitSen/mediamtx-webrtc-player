@@ -499,8 +499,9 @@ fn module_base(pid: u32, name: &str) -> u64 {
 
 #[cfg(windows)]
 fn is_wow64(handle: windows::Win32::Foundation::HANDLE) -> bool {
+    use windows::Win32::Foundation::BOOL;
     use windows::Win32::System::Threading::IsWow64Process;
-    let mut wow = windows::core::BOOL(0);
+    let mut wow = BOOL(0);
     unsafe {
         if IsWow64Process(handle, &mut wow).is_ok() {
             return wow.as_bool();

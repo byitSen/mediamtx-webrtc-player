@@ -2,6 +2,7 @@ import { loadSettings, saveSettings, getEffectiveSettings } from "./config.js";
 import { initPlayers, getPlayerInstances, applyGridColumns } from "./layout.js";
 import { setMaxActiveConnections } from "./webrtc-pool.js";
 import { dataUrlToBase64 } from "./utils.js";
+import { installDesktopGlobals, isDesktopEnv } from "./desktop.js";
 
 const SCREENSHOT_INTERVAL_MS = 200;
 const DESKTOP_SAVE_DIR_KEY = "desktop_screenshot_dir";
@@ -357,6 +358,7 @@ async function batchScreenshot() {
     if (isElectronEnv()) {
       const baseDir = localStorage.getItem(DESKTOP_SAVE_DIR_KEY);
       let success = 0;
+      let lastError = "";
       for (const p of players) {
         if (p.isConnected) {
           try {
@@ -368,17 +370,24 @@ async function batchScreenshot() {
                 relativePath: result.relativePath,
                 base64Png,
               });
-              if (res?.ok) success += 1;
+              if (res?.ok !== false) success += 1;
+              else lastError = res?.message || "保存失败";
+            } else {
+              lastError = "画面尚未就绪";
             }
             await new Promise((r) => setTimeout(r, SCREENSHOT_INTERVAL_MS));
           } catch (e) {
             console.error("batch screenshot error", e);
+            lastError = e?.message || String(e);
           }
         }
       }
       if (success > 0) {
         showToast(`已保存 ${success} 张截图到所选目录`);
         updateSaveDirDisplay();
+        await new Promise((r) => setTimeout(r, TOAST_DURATION_MS));
+      } else {
+        showToast(lastError || "没有可截图的在线画面");
         await new Promise((r) => setTimeout(r, TOAST_DURATION_MS));
       }
       return;
@@ -398,6 +407,9 @@ async function batchScreenshot() {
     }
     if (success > 0) {
       showToast(`已为 ${success} 路摄像头完成截图`);
+      await new Promise((r) => setTimeout(r, TOAST_DURATION_MS));
+    } else {
+      showToast("没有可截图的在线画面");
       await new Promise((r) => setTimeout(r, TOAST_DURATION_MS));
     }
   } finally {
@@ -433,7 +445,7 @@ function updateSaveDirDisplay() {
 
 function isElectronEnv() {
   if (typeof window === "undefined") return false;
-  return !!window.electronAPI;
+  return isDesktopEnv() || !!window.electronAPI;
 }
 
 function formatDebugTime(ts) {
@@ -621,6 +633,16 @@ function setupGlobalControls() {
 }
 
 window.addEventListener("load", async () => {
+  await installDesktopGlobals();
+  // 异步校正 platform（Windows 内存调试按钮）
+  if (window.desktopAPI?.getPlatform) {
+    try {
+      const p = await window.desktopAPI.getPlatform();
+      if (window.electronAPI) {
+        Object.defineProperty(window.electronAPI, "platform", { get: () => (p === "windows" ? "win32" : p === "macos" ? "darwin" : p) });
+      }
+    } catch (_) {}
+  }
   setupGlobalControls();
   setupMemoryDebugUi();
   await showAppVersion();

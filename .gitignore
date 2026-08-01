@@ -5,8 +5,12 @@ node_modules/
 dist/
 release/
 
-# FFmpeg binaries (downloaded by scripts/download-ffmpeg.js)
+# FFmpeg binaries
 resources/ffmpeg/
+src-tauri/resources/ffmpeg/
+
+# Tauri / Rust
+src-tauri/target/
 
 # IDE / OS
 .DS_Store
@@ -21,3 +25,4 @@ resources/ffmpeg/
 .mediamtx.pid
 
 mediamtx-webrtc-player@*
+icon.iconset/

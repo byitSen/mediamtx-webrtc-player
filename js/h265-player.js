@@ -1,8 +1,8 @@
 /**
  * H.265 AnnexB → WebCodecs VideoDecoder → canvas
  * - 按 Access Unit 攒多 slice 再 decode
- * - 解码送入串行，避免重叠 flush
- * - 解码后立即渲染
+ * - 解码送入串行
+ * - 解码后立即渲染（低延迟，避免 fMP4 关键帧间隔卡帧）
  */
 const START_CODE_4 = [0, 0, 0, 1];
 
@@ -31,7 +31,6 @@ function isKeyNal(type) {
   return type === 19 || type === 20 || type === 21;
 }
 
-/** HEVC：NAL 头 2 字节后，slice_segment_header 的 first_slice_segment_in_pic_flag */
 function isFirstSliceOfPic(nal) {
   if (!nal || nal.length < 3) return true;
   return (nal[2] & 0x80) !== 0;
@@ -73,7 +72,7 @@ export class H265Player {
     this._configPromise = null;
     this.destroyed = false;
     this.timestampUs = 0;
-    this.frameDurationUs = 40000; // 默认按 25fps 打时间戳
+    this.frameDurationUs = 40000;
 
     this.pendingAccessUnit = [];
     this.pendingHasVcl = false;
@@ -89,6 +88,7 @@ export class H265Player {
 
   async play(wsUrl) {
     this.destroySocketOnly();
+    this.destroyed = false;
     this._ensureDecoder();
     this._emitStatus("connecting");
 
@@ -126,7 +126,7 @@ export class H265Player {
     if (typeof VideoDecoder === "undefined") {
       throw new Error("当前环境不支持 WebCodecs VideoDecoder");
     }
-    if (this.decoder) return;
+    if (this.decoder && this.decoder.state !== "closed") return;
 
     this.decoder = new VideoDecoder({
       output: (frame) => this._onDecodedFrame(frame),
@@ -135,6 +135,8 @@ export class H265Player {
         this._emitError(err?.message || "解码失败（请确认系统支持 HEVC 硬解）");
       },
     });
+    this.configured = false;
+    this._configPromise = null;
   }
 
   _onDecodedFrame(frame) {

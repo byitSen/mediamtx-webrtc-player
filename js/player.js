@@ -1,9 +1,9 @@
 import { getEffectiveSettings } from "./config.js";
 import { formatTimestamp, saveImageToPath } from "./utils.js";
-import { H265Player } from "./h265-player.js";
+import { RtspMsePlayer, pickMseCodec } from "./rtsp-mse-player.js";
 
-function isElectron() {
-  return typeof window !== "undefined" && !!window.electronAPI;
+function isDesktop() {
+  return typeof window !== "undefined" && !!(window.desktopAPI?.isDesktop?.() || window.electronAPI);
 }
 
 function cameraId(camera) {
@@ -14,7 +14,7 @@ export class Player {
   constructor(containerEl, cameraConfig) {
     this.containerEl = containerEl;
     this.camera = cameraConfig;
-    this.h265 = null;
+    this.msePlayer = null;
     this.proxyRtspUrl = null;
     this.isConnected = false;
     this.reconnectTimer = null;
@@ -50,10 +50,14 @@ export class Player {
     const videoWrapper = document.createElement("div");
     videoWrapper.className = "video-wrapper";
 
-    const canvas = document.createElement("canvas");
-    canvas.className = "player-video player-canvas";
+    const video = document.createElement("video");
+    video.className = "player-video";
+    video.muted = true;
+    video.playsInline = true;
+    video.autoplay = true;
+    video.setAttribute("playsinline", "");
 
-    videoWrapper.appendChild(canvas);
+    videoWrapper.appendChild(video);
 
     const footer = document.createElement("div");
     footer.className = "player-footer";
@@ -90,16 +94,17 @@ export class Player {
       status,
       statusText: text,
       videoWrapper,
-      canvas,
-      video: canvas,
+      video,
       btnFull,
       btnReconnect,
       statsText,
     };
   }
 
-  _updateVideoWrapperAspectRatio(w, h) {
-    const { videoWrapper } = this.dom;
+  _updateVideoWrapperAspectRatio() {
+    const { video, videoWrapper } = this.dom;
+    const w = video.videoWidth;
+    const h = video.videoHeight;
     if (w > 0 && h > 0) {
       videoWrapper.style.aspectRatio = `${w} / ${h}`;
     } else {
@@ -108,17 +113,11 @@ export class Player {
   }
 
   _bindEvents() {
-    this.dom.btnFull.addEventListener("click", () => {
-      this.toggleFullscreenInApp();
-    });
-
-    this.dom.videoWrapper.addEventListener("dblclick", () => {
-      this.toggleFullscreenInApp();
-    });
-
-    this.dom.btnReconnect.addEventListener("click", () => {
-      this.reconnectNow();
-    });
+    this.dom.btnFull.addEventListener("click", () => this.toggleFullscreenInApp());
+    this.dom.videoWrapper.addEventListener("dblclick", () => this.toggleFullscreenInApp());
+    this.dom.btnReconnect.addEventListener("click", () => this.reconnectNow());
+    this.dom.video.addEventListener("loadedmetadata", () => this._updateVideoWrapperAspectRatio());
+    this.dom.video.addEventListener("resize", () => this._updateVideoWrapperAspectRatio());
   }
 
   setStatus(state, subText) {
@@ -148,10 +147,17 @@ export class Player {
     this.stopStatsTimer();
     await this.closePeer();
 
-    if (!isElectron() || !window.electronAPI?.createRtspProxy) {
+    if (!isDesktop() || !window.electronAPI?.createRtspProxy) {
       this.setStatus("not_ready", "仅桌面版支持本地 RTSP");
-      this.dom.status.title = "请使用 Electron 桌面版播放 RTSP";
+      this.dom.status.title = "请使用 Tauri 桌面版播放 RTSP";
       this.dom.statsText.textContent = "请使用桌面版";
+      return;
+    }
+
+    const mime = pickMseCodec();
+    if (!mime) {
+      this.setStatus("not_ready", "不支持 MSE 解码");
+      this.dom.status.title = "H.265 可能需安装系统 HEVC 扩展";
       return;
     }
 
@@ -172,13 +178,14 @@ export class Player {
       this.proxyRtspUrl = rtspUrl;
       const wsUrl = res.data;
 
-      this.h265 = new H265Player(this.dom.canvas, {
+      this.msePlayer = new RtspMsePlayer(this.dom.video, {
         onStatus: (s) => {
           if (s === "online") {
             this.isConnected = true;
             this.reconnectAttempts = 0;
             this.setStatus("online");
-            this.dom.statsText.textContent = "解码中…";
+            this.dom.statsText.textContent = "播放中…";
+            this._updateVideoWrapperAspectRatio();
           } else if (s === "connecting") {
             this.setStatus("connecting");
           } else if (s === "offline") {
@@ -190,19 +197,18 @@ export class Player {
           }
         },
         onError: (msg) => {
-          this.setStatus("not_ready", msg || "解码失败");
+          this.setStatus("not_ready", msg || "播放失败");
           this.dom.status.title = msg || "";
         },
-        onFrame: ({ width, height }) => this._updateVideoWrapperAspectRatio(width, height),
         onStats: ({ fps }) => {
           this.dom.statsText.textContent = `FPS: ${fps != null ? fps.toFixed(1) : "-"}`;
         },
       });
 
-      await this.h265.play(wsUrl);
+      await this.msePlayer.play(wsUrl, mime);
     } catch (err) {
       const msg = err?.message || String(err);
-      console.error(`[${this.camera.name || rtspUrl}] RTSP 代理错误:`, msg);
+      console.error(`[${this.camera.name || rtspUrl}] RTSP 错误:`, msg);
       this.setStatus("offline", msg);
       this.reconnectAttempts += 1;
       const delay = Math.min(3000 + this.reconnectAttempts * 2000, 20000);
@@ -240,7 +246,7 @@ export class Player {
   async toggleFullscreenInApp() {
     const card = this.containerEl;
     const isFull = card.classList.contains("fullscreen-mode");
-    const media = this.dom.canvas;
+    const media = this.dom.video;
     const api = typeof window !== "undefined" && window.electronAPI;
 
     if (isFull) {
@@ -301,9 +307,9 @@ export class Player {
   }
 
   _applyFullscreenTransform() {
-    if (!this.dom.canvas) return;
+    if (!this.dom.video) return;
     const { x, y } = this.fullscreenPan || { x: 0, y: 0 };
-    this.dom.canvas.style.transform = `translate(${x}px, ${y}px) scale(${this.fullscreenZoom})`;
+    this.dom.video.style.transform = `translate(${x}px, ${y}px) scale(${this.fullscreenZoom})`;
   }
 
   _onFullscreenWheel(e) {
@@ -343,13 +349,15 @@ export class Player {
   }
 
   async singleScreenshot(batchTimestamp) {
-    const canvas = this.dom.canvas;
-    if (!canvas || !canvas.width || !canvas.height) return;
+    const video = this.dom.video;
+    if (!video || !video.videoWidth) return;
     const ts = batchTimestamp || Date.now();
     const { date, time } = formatTimestamp(ts);
-
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    canvas.getContext("2d").drawImage(video, 0, 0);
     const dataUrl = canvas.toDataURL("image/jpeg", 0.92);
-
     const dir = `${date}/${time}`;
     const fileName = `${this.camera.name || cameraId(this.camera)}_${ts}.jpg`;
     const fullPath = `${dir}/${fileName}`;
@@ -361,11 +369,11 @@ export class Player {
   }
 
   async closePeer() {
-    if (this.h265) {
+    if (this.msePlayer) {
       try {
-        this.h265.destroy();
+        this.msePlayer.destroy();
       } catch (_) {}
-      this.h265 = null;
+      this.msePlayer = null;
     }
     if (this.proxyRtspUrl && window.electronAPI?.destroyRtspProxy) {
       try {

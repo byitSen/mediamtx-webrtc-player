@@ -1,39 +1,31 @@
 #!/usr/bin/env node
 /**
- * 下载当前平台的静态 FFmpeg 到 resources/ffmpeg/{platform}/
+ * 下载当前平台静态 FFmpeg 到 src-tauri/resources/ffmpeg/
  * 来源：eugeneware/ffmpeg-static（gzip 单二进制）
  */
-const fs = require("fs");
-const path = require("path");
-const https = require("https");
-const http = require("http");
-const { createGunzip } = require("zlib");
-const { pipeline } = require("stream/promises");
-const { createWriteStream } = require("fs");
+import fs from "fs";
+import path from "path";
+import https from "https";
+import http from "http";
+import { createGunzip } from "zlib";
+import { pipeline } from "stream/promises";
+import { createWriteStream } from "fs";
+import { fileURLToPath } from "url";
 
 const VERSION = "b6.1.1";
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.join(__dirname, "..");
 const platform = process.platform;
 const arch = process.arch === "arm64" ? "arm64" : "x64";
 
-/** electron-builder ${os}：win | mac | linux */
-function builderOsDir() {
-  if (platform === "win32") return "win";
-  if (platform === "darwin") return "mac";
-  if (platform === "linux") return "linux";
-  return null;
-}
-
-const osDir = builderOsDir();
-if (!osDir) {
+if (!["win32", "darwin", "linux"].includes(platform)) {
   console.error(`[download-ffmpeg] 不支持的平台: ${platform}`);
   process.exit(1);
 }
 
-const outDir = path.join(ROOT, "resources", "ffmpeg", osDir);
+const outDir = path.join(ROOT, "src-tauri", "resources", "ffmpeg");
 const binaryName = platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
 const outFile = path.join(outDir, binaryName);
-// b6+ 资源名形如 ffmpeg-darwin-arm64.gz / ffmpeg-win32-x64.gz
 const assetArch = platform === "win32" ? "x64" : arch;
 const url = `https://github.com/eugeneware/ffmpeg-static/releases/download/${VERSION}/ffmpeg-${platform}-${assetArch}.gz`;
 
@@ -45,7 +37,7 @@ function followRedirect(targetUrl, redirects = 0) {
     }
     const lib = targetUrl.startsWith("https") ? https : http;
     lib
-      .get(targetUrl, { headers: { "User-Agent": "mediamtx-webrtc-player" } }, (res) => {
+      .get(targetUrl, { headers: { "User-Agent": "monitor-player" } }, (res) => {
         if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
           res.resume();
           followRedirect(res.headers.location, redirects + 1).then(resolve, reject);
@@ -64,6 +56,15 @@ function followRedirect(targetUrl, redirects = 0) {
 
 async function main() {
   fs.mkdirSync(outDir, { recursive: true });
+  // 清理其它平台残留名
+  for (const name of ["ffmpeg", "ffmpeg.exe"]) {
+    const p = path.join(outDir, name);
+    if (name !== binaryName && fs.existsSync(p)) {
+      try {
+        fs.unlinkSync(p);
+      } catch (_) {}
+    }
+  }
   if (fs.existsSync(outFile) && fs.statSync(outFile).size > 100000) {
     console.log(`[download-ffmpeg] 已存在，跳过: ${outFile}`);
     return;

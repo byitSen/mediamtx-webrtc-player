@@ -9,10 +9,23 @@ function cameraId(camera) {
   return camera?.rtspUrl || camera?.path || camera?.id || camera?.name || "";
 }
 
-/** 进入全屏前的主窗口尺寸（全局只记一次，避免切画面后被屏幕尺寸覆盖） */
+/** 应用启动时的主窗口几何（退出画面全屏后恢复到此） */
+let startupWindowGeometry = null;
+/** 本次全屏会话开始前的窗口几何（优先恢复；若无则用 startup） */
 let preFullscreenWindowSize = null;
 /** 当前处于应用内全屏的 Player */
 let activeFullscreenPlayer = null;
+
+export function setStartupWindowGeometry(geo) {
+  if (geo?.width && geo?.height) {
+    startupWindowGeometry = {
+      width: geo.width,
+      height: geo.height,
+      x: typeof geo.x === "number" ? geo.x : undefined,
+      y: typeof geo.y === "number" ? geo.y : undefined,
+    };
+  }
+}
 
 export class Player {
   constructor(containerEl, cameraConfig) {
@@ -294,11 +307,24 @@ export class Player {
 
   async _restorePreFullscreenWindow() {
     const api = typeof window !== "undefined" && window.electronAPI;
-    if (!api?.setWindowSize || !preFullscreenWindowSize) return;
-    const { width, height } = preFullscreenWindowSize;
+    const target = preFullscreenWindowSize || startupWindowGeometry;
     preFullscreenWindowSize = null;
+    if (!api || !target?.width || !target?.height) return;
     try {
-      await api.setWindowSize(width, height);
+      if (api.restoreWindowGeometry) {
+        await api.restoreWindowGeometry({
+          width: target.width,
+          height: target.height,
+          x: target.x,
+          y: target.y,
+        });
+      } else {
+        if (api.unmaximizeWindow) await api.unmaximizeWindow();
+        if (api.setWindowPosition && typeof target.x === "number" && typeof target.y === "number") {
+          await api.setWindowPosition(target.x, target.y);
+        }
+        await api.setWindowSize(target.width, target.height);
+      }
     } catch (e) {
       console.warn("restore window size:", e);
     }
@@ -308,11 +334,20 @@ export class Player {
     const api = typeof window !== "undefined" && window.electronAPI;
     if (!api?.setWindowSize) return;
     try {
-      // 仅在首次进入全屏时记录原窗口尺寸
-      if (!preFullscreenWindowSize && api.getWindowSize) {
-        const size = await api.getWindowSize();
-        if (size?.width && size?.height) {
-          preFullscreenWindowSize = { width: size.width, height: size.height };
+      // 仅在首次进入全屏时记录原窗口尺寸（优先已记录的启动尺寸）
+      if (!preFullscreenWindowSize) {
+        if (startupWindowGeometry) {
+          preFullscreenWindowSize = { ...startupWindowGeometry };
+        } else if (api.getWindowSize) {
+          const size = await api.getWindowSize();
+          if (size?.width && size?.height) {
+            preFullscreenWindowSize = {
+              width: size.width,
+              height: size.height,
+              x: typeof size.x === "number" ? size.x : undefined,
+              y: typeof size.y === "number" ? size.y : undefined,
+            };
+          }
         }
       }
       let fw = 0;
@@ -331,6 +366,11 @@ export class Player {
       if (!fw || !fh) {
         fw = Math.max(520, window.screen?.availWidth || window.screen?.width || 1920);
         fh = Math.max(420, window.screen?.availHeight || window.screen?.height || 1080);
+      }
+      if (api.unmaximizeWindow) {
+        try {
+          await api.unmaximizeWindow();
+        } catch (_) {}
       }
       if (api.setWindowPosition && sx != null && sy != null) {
         try {

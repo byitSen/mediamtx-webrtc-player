@@ -82,6 +82,8 @@ fn set_window_size(app: AppHandle, width: u32, height: u32) -> Result<(), String
     let w = width.clamp(520, 8192);
     let h = height.clamp(420, 8192);
     if let Some(win) = app.get_webview_window("main") {
+        // Windows：最大化状态下 set_size 常被忽略
+        let _ = win.unmaximize();
         win.set_size(tauri::Size::Logical(tauri::LogicalSize {
             width: w as f64,
             height: h as f64,
@@ -94,12 +96,19 @@ fn set_window_size(app: AppHandle, width: u32, height: u32) -> Result<(), String
 #[tauri::command]
 fn get_window_size(app: AppHandle) -> Result<Option<serde_json::Value>, String> {
     if let Some(win) = app.get_webview_window("main") {
+        // inner_size 与 set_size 一致（逻辑客户区），避免 outer 含标题栏导致越放越大
         let size = win.inner_size().map_err(|e| e.to_string())?;
         let scale = win.scale_factor().unwrap_or(1.0);
-        return Ok(Some(serde_json::json!({
+        let pos = win.outer_position().ok();
+        let mut out = serde_json::json!({
             "width": (size.width as f64 / scale).round() as u32,
             "height": (size.height as f64 / scale).round() as u32,
-        })));
+        });
+        if let Some(p) = pos {
+            out["x"] = serde_json::json!(((p.x as f64) / scale).round() as i32);
+            out["y"] = serde_json::json!(((p.y as f64) / scale).round() as i32);
+        }
+        return Ok(Some(out));
     }
     Ok(None)
 }
@@ -134,9 +143,46 @@ fn get_screen_size(app: AppHandle) -> Result<Option<serde_json::Value>, String> 
 #[tauri::command]
 fn set_window_position(app: AppHandle, x: i32, y: i32) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("main") {
+        let _ = win.unmaximize();
         win.set_position(tauri::Position::Logical(tauri::LogicalPosition {
             x: x as f64,
             y: y as f64,
+        }))
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn unmaximize_window(app: AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("main") {
+        win.unmaximize().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+/// 恢复窗口几何（先取消最大化，再设位置与尺寸；Windows 必需）
+#[tauri::command]
+fn restore_window_geometry(
+    app: AppHandle,
+    width: u32,
+    height: u32,
+    x: Option<i32>,
+    y: Option<i32>,
+) -> Result<(), String> {
+    let w = width.clamp(520, 8192);
+    let h = height.clamp(420, 8192);
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.unmaximize();
+        if let (Some(px), Some(py)) = (x, y) {
+            let _ = win.set_position(tauri::Position::Logical(tauri::LogicalPosition {
+                x: px as f64,
+                y: py as f64,
+            }));
+        }
+        win.set_size(tauri::Size::Logical(tauri::LogicalSize {
+            width: w as f64,
+            height: h as f64,
         }))
         .map_err(|e| e.to_string())?;
     }
@@ -209,6 +255,8 @@ pub fn run() {
             get_window_size,
             get_screen_size,
             set_window_position,
+            unmaximize_window,
+            restore_window_geometry,
             register_screenshot_shortcut,
             configure_memory_watch,
         ])

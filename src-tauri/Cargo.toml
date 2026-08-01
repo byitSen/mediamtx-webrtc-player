@@ -1,6 +1,6 @@
 [package]
 name = "monitor-player"
-version = "3.0.5"
+version = "3.0.6"
 description = "monitor-player — local FFmpeg RTSP via Tauri"
 authors = ["monitor-player"]
 edition = "2021"

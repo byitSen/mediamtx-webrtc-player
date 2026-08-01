@@ -1,4 +1,3 @@
-import { getEffectiveSettings } from "./config.js";
 import { formatTimestamp, saveImageToPath } from "./utils.js";
 import { RtspMsePlayer, pickMseCodec } from "./rtsp-mse-player.js";
 
@@ -336,11 +335,31 @@ export class Player {
           const size = await api.getWindowSize();
           if (size) {
             this._savedWindowSize = { width: size.width, height: size.height };
-            const cfg = getEffectiveSettings();
-            const fw = Math.max(520, Math.min(3840, cfg.fullscreenWidth ?? 1240));
-            const fh = Math.max(420, Math.min(2160, cfg.fullscreenHeight ?? 800));
-            await api.setWindowSize(fw, fh);
           }
+          // 全屏尺寸 = 当前显示器屏幕尺寸
+          let fw = 0;
+          let fh = 0;
+          let sx = null;
+          let sy = null;
+          if (api.getScreenSize) {
+            const screen = await api.getScreenSize();
+            if (screen?.width && screen?.height) {
+              fw = screen.width;
+              fh = screen.height;
+              if (typeof screen.x === "number") sx = screen.x;
+              if (typeof screen.y === "number") sy = screen.y;
+            }
+          }
+          if (!fw || !fh) {
+            fw = Math.max(520, window.screen?.availWidth || window.screen?.width || 1920);
+            fh = Math.max(420, window.screen?.availHeight || window.screen?.height || 1080);
+          }
+          if (api.setWindowPosition && sx != null && sy != null) {
+            try {
+              await api.setWindowPosition(sx, sy);
+            } catch (_) {}
+          }
+          await api.setWindowSize(fw, fh);
         } catch (e) {
           console.warn("set fullscreen window size:", e);
         }

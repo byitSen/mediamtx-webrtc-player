@@ -64,6 +64,8 @@ export const desktopAPI = {
   },
   setWindowSize: (width, height) => safeInvoke("set_window_size", { width, height }),
   getWindowSize: () => safeInvoke("get_window_size"),
+  getScreenSize: () => safeInvoke("get_screen_size"),
+  setWindowPosition: (x, y) => safeInvoke("set_window_position", { x, y }),
   registerScreenshotShortcut: (accelerator) =>
     safeInvoke("register_screenshot_shortcut", { accelerator: accelerator || null }),
   configureMemoryWatch: async (cfg) => {
@@ -105,6 +107,8 @@ export function installDesktopGlobals() {
     saveScreenshot: desktopAPI.saveScreenshot,
     setWindowSize: desktopAPI.setWindowSize,
     getWindowSize: desktopAPI.getWindowSize,
+    getScreenSize: desktopAPI.getScreenSize,
+    setWindowPosition: desktopAPI.setWindowPosition,
     registerScreenshotShortcut: desktopAPI.registerScreenshotShortcut,
     configureMemoryWatch: desktopAPI.configureMemoryWatch,
     get platform() {

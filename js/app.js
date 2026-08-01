@@ -58,10 +58,6 @@ const settingWindowWidth = document.getElementById("settingWindowWidth");
 const settingWindowHeight = document.getElementById("settingWindowHeight");
 const settingWindowWidthSlider = document.getElementById("settingWindowWidthSlider");
 const settingWindowHeightSlider = document.getElementById("settingWindowHeightSlider");
-const settingFullscreenWidth = document.getElementById("settingFullscreenWidth");
-const settingFullscreenHeight = document.getElementById("settingFullscreenHeight");
-const settingFullscreenWidthSlider = document.getElementById("settingFullscreenWidthSlider");
-const settingFullscreenHeightSlider = document.getElementById("settingFullscreenHeightSlider");
 const settingScreenshotShortcut = document.getElementById("settingScreenshotShortcut");
 const settingMemoryWatchSection = document.getElementById("settingMemoryWatchSection");
 const settingMemoryWatchEnabled = document.getElementById("settingMemoryWatchEnabled");
@@ -231,12 +227,6 @@ function openSettings() {
   if (settingWindowHeightSlider) settingWindowHeightSlider.value = String(winH);
   if (settingWindowPreset) updateWindowPresetFromSize(winW, winH);
 
-  const fsW = Math.max(WINDOW_WIDTH_MIN, Math.min(WINDOW_WIDTH_MAX, cfg.fullscreenWidth ?? 1240));
-  const fsH = Math.max(WINDOW_HEIGHT_MIN, Math.min(WINDOW_HEIGHT_MAX, cfg.fullscreenHeight ?? 800));
-  if (settingFullscreenWidth) settingFullscreenWidth.value = String(fsW);
-  if (settingFullscreenHeight) settingFullscreenHeight.value = String(fsH);
-  if (settingFullscreenWidthSlider) settingFullscreenWidthSlider.value = String(fsW);
-  if (settingFullscreenHeightSlider) settingFullscreenHeightSlider.value = String(fsH);
   if (settingScreenshotShortcut) settingScreenshotShortcut.value = cfg.screenshotShortcut ?? "CommandOrControl+Shift+S";
 
   if (settingMemoryWatchEnabled) settingMemoryWatchEnabled.checked = !!cfg.memoryWatchEnabled;
@@ -323,8 +313,6 @@ function saveSettingsFromForm() {
   const maxActive = Math.max(1, Math.min(16, parseInt(settingMaxActive?.value || "8", 10) || 8));
   const windowWidth = Math.max(WINDOW_WIDTH_MIN, Math.min(WINDOW_WIDTH_MAX, parseInt(settingWindowWidth?.value || "1020", 10) || 1020));
   const windowHeight = Math.max(WINDOW_HEIGHT_MIN, Math.min(WINDOW_HEIGHT_MAX, parseInt(settingWindowHeight?.value || "820", 10) || 820));
-  const fullscreenWidth = Math.max(WINDOW_WIDTH_MIN, Math.min(WINDOW_WIDTH_MAX, parseInt(settingFullscreenWidth?.value || "1240", 10) || 1240));
-  const fullscreenHeight = Math.max(WINDOW_HEIGHT_MIN, Math.min(WINDOW_HEIGHT_MAX, parseInt(settingFullscreenHeight?.value || "800", 10) || 800));
   const screenshotShortcut = (settingScreenshotShortcut?.value || "").trim();
   const memoryWatchEnabled = !!settingMemoryWatchEnabled?.checked;
   const memoryWatchProcessName = (settingMemoryWatchProcessName?.value || "").trim() || "weight.exe";
@@ -345,8 +333,6 @@ function saveSettingsFromForm() {
     maxActiveConnections: maxActive,
     windowWidth,
     windowHeight,
-    fullscreenWidth,
-    fullscreenHeight,
     screenshotShortcut: screenshotShortcut || undefined,
     memoryWatchEnabled,
     memoryWatchProcessName,
@@ -358,6 +344,8 @@ function saveSettingsFromForm() {
   delete next.webrtcBase;
   delete next.lockFpsEnabled;
   delete next.lockFps;
+  delete next.fullscreenWidth;
+  delete next.fullscreenHeight;
   saveSettings(next);
 
   if (isElectronEnv()) {
@@ -632,31 +620,6 @@ function setupGlobalControls() {
   }
   if (settingWindowPreset) {
     settingWindowPreset.addEventListener("change", () => applyWindowPreset(settingWindowPreset.value));
-  }
-
-  if (settingFullscreenWidthSlider && settingFullscreenWidth) {
-    settingFullscreenWidthSlider.addEventListener("input", () => {
-      settingFullscreenWidth.value = settingFullscreenWidthSlider.value;
-    });
-  }
-  if (settingFullscreenWidth && settingFullscreenWidthSlider) {
-    settingFullscreenWidth.addEventListener("input", () => {
-      const v = Math.max(WINDOW_WIDTH_MIN, Math.min(WINDOW_WIDTH_MAX, parseInt(settingFullscreenWidth.value, 10) || 1240));
-      settingFullscreenWidth.value = String(v);
-      settingFullscreenWidthSlider.value = String(v);
-    });
-  }
-  if (settingFullscreenHeightSlider && settingFullscreenHeight) {
-    settingFullscreenHeightSlider.addEventListener("input", () => {
-      settingFullscreenHeight.value = settingFullscreenHeightSlider.value;
-    });
-  }
-  if (settingFullscreenHeight && settingFullscreenHeightSlider) {
-    settingFullscreenHeight.addEventListener("input", () => {
-      const v = Math.max(WINDOW_HEIGHT_MIN, Math.min(WINDOW_HEIGHT_MAX, parseInt(settingFullscreenHeight.value, 10) || 800));
-      settingFullscreenHeight.value = String(v);
-      settingFullscreenHeightSlider.value = String(v);
-    });
   }
 
   if (settingWindowSizeSection) {

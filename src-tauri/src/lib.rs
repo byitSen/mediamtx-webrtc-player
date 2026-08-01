@@ -79,8 +79,8 @@ async fn choose_save_dir(app: AppHandle) -> Result<Option<String>, String> {
 
 #[tauri::command]
 fn set_window_size(app: AppHandle, width: u32, height: u32) -> Result<(), String> {
-    let w = width.clamp(520, 3840);
-    let h = height.clamp(420, 2160);
+    let w = width.clamp(520, 8192);
+    let h = height.clamp(420, 8192);
     if let Some(win) = app.get_webview_window("main") {
         win.set_size(tauri::Size::Logical(tauri::LogicalSize {
             width: w as f64,
@@ -102,6 +102,45 @@ fn get_window_size(app: AppHandle) -> Result<Option<serde_json::Value>, String> 
         })));
     }
     Ok(None)
+}
+
+/// 当前窗口所在显示器的逻辑分辨率（用于单画面全屏铺满屏幕）
+#[tauri::command]
+fn get_screen_size(app: AppHandle) -> Result<Option<serde_json::Value>, String> {
+    if let Some(win) = app.get_webview_window("main") {
+        let monitor = win
+            .current_monitor()
+            .map_err(|e| e.to_string())?
+            .or_else(|| win.primary_monitor().ok().flatten());
+        if let Some(m) = monitor {
+            let scale = m.scale_factor();
+            let size = m.size();
+            let width = ((size.width as f64) / scale).round().max(1.0) as u32;
+            let height = ((size.height as f64) / scale).round().max(1.0) as u32;
+            let pos = m.position();
+            let x = ((pos.x as f64) / scale).round() as i32;
+            let y = ((pos.y as f64) / scale).round() as i32;
+            return Ok(Some(serde_json::json!({
+                "width": width,
+                "height": height,
+                "x": x,
+                "y": y,
+            })));
+        }
+    }
+    Ok(None)
+}
+
+#[tauri::command]
+fn set_window_position(app: AppHandle, x: i32, y: i32) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("main") {
+        win.set_position(tauri::Position::Logical(tauri::LogicalPosition {
+            x: x as f64,
+            y: y as f64,
+        }))
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -168,6 +207,8 @@ pub fn run() {
             choose_save_dir,
             set_window_size,
             get_window_size,
+            get_screen_size,
+            set_window_position,
             register_screenshot_shortcut,
             configure_memory_watch,
         ])

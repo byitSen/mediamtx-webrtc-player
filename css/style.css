@@ -31,7 +31,8 @@ body {
   background: #020617;
   border-bottom: 1px solid #1f2937;
   position: relative;
-  z-index: 11000;
+  z-index: 21000;
+  flex-shrink: 0;
 }
 
 .top-bar .title {
@@ -231,12 +232,15 @@ main {
   color: #9ca3af;
 }
 
-/* 应用内全屏模式：挂到 body 后铺满视口，盖过顶栏 */
+/* 应用内全屏：铺满顶栏以下区域，顶栏按钮保持可点 */
 .player-card.fullscreen-mode {
   position: fixed !important;
-  inset: 0 !important;
-  width: 100vw !important;
-  height: 100vh !important;
+  top: var(--app-top-bar-height, 52px) !important;
+  left: 0 !important;
+  right: 0 !important;
+  bottom: 0 !important;
+  width: auto !important;
+  height: auto !important;
   max-width: none !important;
   max-height: none !important;
   margin: 0 !important;
@@ -248,7 +252,12 @@ main {
   background: #020617;
 }
 
-body.app-player-fullscreen .top-bar,
+body.app-player-fullscreen .top-bar {
+  visibility: visible;
+  pointer-events: auto;
+  z-index: 21000;
+}
+
 body.app-player-fullscreen > footer.footer,
 body.app-player-fullscreen .status-panel {
   visibility: hidden;
@@ -303,10 +312,11 @@ body.app-player-fullscreen .status-panel {
   letter-spacing: 0.02em;
 }
 
-/* 设置面板 */
+/* 设置面板：需高于全屏卡片（20000）与顶栏（21000） */
 .modal-overlay {
   position: fixed;
   inset: 0;
+  z-index: 30000;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -487,7 +497,7 @@ body.app-player-fullscreen .status-panel {
   bottom: 48px;
   width: min(520px, calc(100vw - 24px));
   height: min(320px, 40vh);
-  z-index: 12000;
+  z-index: 30000;
   display: flex;
   flex-direction: column;
   background: #020617;

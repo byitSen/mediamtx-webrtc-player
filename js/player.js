@@ -264,6 +264,7 @@ export class Player {
     if (isFull) {
       card.classList.remove("fullscreen-mode");
       document.body.classList.remove("app-player-fullscreen");
+      document.documentElement.style.removeProperty("--app-top-bar-height");
       document.body.style.overflow = "";
       card.style.cursor = "";
       // 移回网格原位
@@ -329,6 +330,10 @@ export class Player {
       card.classList.add("fullscreen-mode");
       document.body.classList.add("app-player-fullscreen");
       document.body.style.overflow = "hidden";
+      // 顶栏高度：全屏卡片从顶栏下方开始，不遮挡截图/设置等按钮
+      const topBar = document.querySelector(".top-bar");
+      const topH = topBar ? Math.ceil(topBar.getBoundingClientRect().height) : 52;
+      document.documentElement.style.setProperty("--app-top-bar-height", `${topH}px`);
 
       if (api?.getWindowSize && api.setWindowSize) {
         try {
@@ -450,6 +455,7 @@ export class Player {
       try {
         this.containerEl.classList.remove("fullscreen-mode");
         document.body.classList.remove("app-player-fullscreen");
+        document.documentElement.style.removeProperty("--app-top-bar-height");
         if (this._fullscreenPlaceholder?.parentNode) {
           this._fullscreenPlaceholder.parentNode.insertBefore(
             this.containerEl,

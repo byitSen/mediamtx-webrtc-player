@@ -669,7 +669,7 @@ function setupGlobalControls() {
 
 window.addEventListener("load", async () => {
   await installDesktopGlobals();
-  // 异步校正 platform（Windows 内存调试按钮）
+  // 异步校正 platform（Windows 内存日志按钮）
   if (window.desktopAPI?.getPlatform) {
     try {
       const p = await window.desktopAPI.getPlatform();

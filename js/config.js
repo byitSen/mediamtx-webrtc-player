@@ -12,9 +12,11 @@ function getDefaultSettings() {
     screenshotShortcut: "CommandOrControl+Shift+S",
     memoryWatchEnabled: false,
     memoryWatchProcessName: "weight.exe",
-    memoryWatchModuleOffset: "0x9B27E0",
-    memoryWatchOffsets: ["0x5EC", "0x310", "0x504", "0x94", "0x4DC"],
-    memoryWatchPointerSize: 8,
+    // [[[[[[["weight.exe"+9B8568]+504]+434]+4]+310]+5EC]  32 位指针
+    memoryWatchModuleOffset: "0x9B8568",
+    memoryWatchOffsets: ["0x504", "0x434", "0x4", "0x310", "0x5EC"],
+    memoryWatchPointerSize: 4,
+    memoryWatchTriggerValue: 0,
   };
 }
 
@@ -40,6 +42,24 @@ export function loadSettings() {
     if (merged.maxActiveConnections > 16) merged.maxActiveConnections = 16;
     delete merged.lockFpsEnabled;
     delete merged.lockFps;
+    // 旧默认链迁移到新默认：weight.exe+0x9B8568 → … → 0x5EC（32 位）
+    const oldDefaultOffsets = ["0x5EC", "0x310", "0x504", "0x94", "0x4DC"];
+    const offsetsEqual =
+      Array.isArray(merged.memoryWatchOffsets) &&
+      merged.memoryWatchOffsets.length === oldDefaultOffsets.length &&
+      merged.memoryWatchOffsets.every((v, i) => String(v).toLowerCase() === oldDefaultOffsets[i].toLowerCase());
+    if (
+      (merged.memoryWatchModuleOffset === "0x9B27E0" || merged.memoryWatchModuleOffset === "0x9b27e0") &&
+      offsetsEqual
+    ) {
+      const d = getDefaultSettings();
+      merged.memoryWatchModuleOffset = d.memoryWatchModuleOffset;
+      merged.memoryWatchOffsets = [...d.memoryWatchOffsets];
+      merged.memoryWatchPointerSize = d.memoryWatchPointerSize;
+    }
+    if (merged.memoryWatchTriggerValue === undefined || merged.memoryWatchTriggerValue === null) {
+      merged.memoryWatchTriggerValue = 0;
+    }
     return merged;
   } catch (e) {
     console.warn("loadSettings error", e);

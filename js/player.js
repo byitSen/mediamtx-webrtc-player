@@ -55,7 +55,11 @@ export class Player {
     video.muted = true;
     video.playsInline = true;
     video.autoplay = true;
+    video.controls = false;
+    video.disablePictureInPicture = true;
     video.setAttribute("playsinline", "");
+    video.setAttribute("disablepictureinpicture", "");
+    video.setAttribute("controlslist", "nodownload nofullscreen noremoteplayback");
 
     videoWrapper.appendChild(video);
 
@@ -113,8 +117,17 @@ export class Player {
   }
 
   _bindEvents() {
-    this.dom.btnFull.addEventListener("click", () => this.toggleFullscreenInApp());
-    this.dom.videoWrapper.addEventListener("dblclick", () => this.toggleFullscreenInApp());
+    const enterFullscreen = (e) => {
+      if (e) {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      void this.toggleFullscreenInApp();
+    };
+    this.dom.btnFull.addEventListener("click", (e) => enterFullscreen(e));
+    // capture：阻止 <video> 原生全屏抢占双击
+    this.dom.videoWrapper.addEventListener("dblclick", enterFullscreen, true);
+    this.dom.video.addEventListener("dblclick", enterFullscreen, true);
     this.dom.btnReconnect.addEventListener("click", () => this.reconnectNow());
     this.dom.video.addEventListener("loadedmetadata", () => this._updateVideoWrapperAspectRatio());
     this.dom.video.addEventListener("resize", () => this._updateVideoWrapperAspectRatio());
@@ -269,20 +282,15 @@ export class Player {
       this.fullscreenPan = { x: 0, y: 0 };
       if (api?.setWindowSize && this._savedWindowSize) {
         const { width, height } = this._savedWindowSize;
-        api.setWindowSize(width, height);
+        try {
+          await api.setWindowSize(width, height);
+        } catch (e) {
+          console.warn("restore window size:", e);
+        }
         this._savedWindowSize = null;
       }
     } else {
-      if (api?.getWindowSize && api.setWindowSize) {
-        const size = await api.getWindowSize();
-        if (size) {
-          this._savedWindowSize = { width: size.width, height: size.height };
-          const cfg = getEffectiveSettings();
-          const fw = Math.max(520, Math.min(3840, cfg.fullscreenWidth ?? 1240));
-          const fh = Math.max(420, Math.min(2160, cfg.fullscreenHeight ?? 800));
-          api.setWindowSize(fw, fh);
-        }
-      }
+      // 先进入应用内全屏，窗口尺寸失败不影响画面铺满
       this.fullscreenZoom = 1;
       this.fullscreenPan = { x: 0, y: 0 };
       this._fullscreenWheelHandler = (e) => this._onFullscreenWheel(e);
@@ -303,6 +311,21 @@ export class Player {
       this._applyFullscreenTransform();
       card.classList.add("fullscreen-mode");
       document.body.style.overflow = "hidden";
+
+      if (api?.getWindowSize && api.setWindowSize) {
+        try {
+          const size = await api.getWindowSize();
+          if (size) {
+            this._savedWindowSize = { width: size.width, height: size.height };
+            const cfg = getEffectiveSettings();
+            const fw = Math.max(520, Math.min(3840, cfg.fullscreenWidth ?? 1240));
+            const fh = Math.max(420, Math.min(2160, cfg.fullscreenHeight ?? 800));
+            await api.setWindowSize(fw, fh);
+          }
+        } catch (e) {
+          console.warn("set fullscreen window size:", e);
+        }
+      }
     }
   }
 

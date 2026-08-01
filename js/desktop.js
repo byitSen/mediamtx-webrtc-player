@@ -66,16 +66,22 @@ export const desktopAPI = {
   getWindowSize: () => safeInvoke("get_window_size"),
   registerScreenshotShortcut: (accelerator) =>
     safeInvoke("register_screenshot_shortcut", { accelerator: accelerator || null }),
-  configureMemoryWatch: (cfg) =>
-    safeInvoke("configure_memory_watch", {
-      config: {
-        enabled: !!cfg.enabled,
-        processName: cfg.processName,
-        moduleOffset: cfg.moduleOffset,
-        offsets: cfg.offsets,
-        pointerSize: cfg.pointerSize,
-      },
-    }),
+  configureMemoryWatch: async (cfg) => {
+    try {
+      return await safeInvoke("configure_memory_watch", {
+        config: {
+          enabled: !!cfg.enabled,
+          processName: (cfg.processName || "").trim() || "weight.exe",
+          moduleOffset: (cfg.moduleOffset || "").trim() || "0x9B8568",
+          offsets: Array.isArray(cfg.offsets) ? cfg.offsets.map((o) => String(o)) : [],
+          pointerSize: cfg.pointerSize ?? 4,
+          triggerValue: cfg.triggerValue ?? 0,
+        },
+      });
+    } catch (e) {
+      return { ok: false, reason: e?.message || String(e) };
+    }
+  },
 
   async initListeners() {
     if (!isTauri()) return;

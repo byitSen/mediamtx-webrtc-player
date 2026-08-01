@@ -71,8 +71,24 @@ const settingMemoryWatchPointerSize = document.getElementById("settingMemoryWatc
 const settingMemoryWatchOffsetsList = document.getElementById("settingMemoryWatchOffsetsList");
 const settingAddMemoryOffset = document.getElementById("settingAddMemoryOffset");
 const settingMemoryWatchHint = document.getElementById("settingMemoryWatchHint");
+const settingMemoryWatchTriggerValue = document.getElementById("settingMemoryWatchTriggerValue");
 
-const DEFAULT_MEMORY_OFFSETS = ["0x5EC", "0x310", "0x504", "0x94", "0x4DC"];
+// [[[[[[["weight.exe"+9B8568]+504]+434]+4]+310]+5EC]
+const DEFAULT_MEMORY_OFFSETS = ["0x504", "0x434", "0x4", "0x310", "0x5EC"];
+const DEFAULT_MEMORY_MODULE_OFFSET = "0x9B8568";
+const DEFAULT_MEMORY_POINTER_SIZE = 4;
+const DEFAULT_MEMORY_TRIGGER_VALUE = 0;
+
+function parseTriggerValue(raw) {
+  const t = String(raw ?? "").trim();
+  if (!t) return DEFAULT_MEMORY_TRIGGER_VALUE;
+  if (/^0x/i.test(t)) {
+    const n = parseInt(t, 16);
+    return Number.isFinite(n) ? (n | 0) : DEFAULT_MEMORY_TRIGGER_VALUE;
+  }
+  const n = parseInt(t, 10);
+  return Number.isFinite(n) ? (n | 0) : DEFAULT_MEMORY_TRIGGER_VALUE;
+}
 const WINDOW_WIDTH_MIN = 520;
 const WINDOW_WIDTH_MAX = 3840;
 const WINDOW_HEIGHT_MIN = 420;
@@ -145,18 +161,27 @@ function buildMemoryWatchConfig(cfg) {
   const ptr = Number(cfg.memoryWatchPointerSize);
   return {
     enabled: !!cfg.memoryWatchEnabled,
-    processName: (cfg.memoryWatchProcessName || "").trim(),
-    moduleOffset: (cfg.memoryWatchModuleOffset || "").trim() || "0x0",
+    processName: (cfg.memoryWatchProcessName || "").trim() || "weight.exe",
+    moduleOffset: (cfg.memoryWatchModuleOffset || "").trim() || DEFAULT_MEMORY_MODULE_OFFSET,
     offsets: Array.isArray(cfg.memoryWatchOffsets) && cfg.memoryWatchOffsets.length
-      ? cfg.memoryWatchOffsets
+      ? cfg.memoryWatchOffsets.map((o) => String(o))
       : [...DEFAULT_MEMORY_OFFSETS],
-    pointerSize: ptr === 4 || ptr === 8 || ptr === 0 ? ptr : 8,
+    pointerSize:
+      ptr === 4 || ptr === 8 || ptr === 0 ? ptr : DEFAULT_MEMORY_POINTER_SIZE,
+    triggerValue: parseTriggerValue(cfg.memoryWatchTriggerValue),
   };
 }
 
-function applyMemoryWatchConfig(cfg) {
+async function applyMemoryWatchConfig(cfg) {
   if (!isElectronEnv() || !window.electronAPI.configureMemoryWatch) return;
-  window.electronAPI.configureMemoryWatch(buildMemoryWatchConfig(cfg));
+  try {
+    const res = await window.electronAPI.configureMemoryWatch(buildMemoryWatchConfig(cfg));
+    if (res && res.ok === false) {
+      console.warn("[memory-watch]", res.reason || res);
+    }
+  } catch (e) {
+    console.error("[memory-watch] configure failed:", e);
+  }
 }
 
 function updateMemoryWatchSectionAvailability() {
@@ -170,7 +195,7 @@ function updateMemoryWatchSectionAvailability() {
   });
   if (settingMemoryWatchHint) {
     settingMemoryWatchHint.textContent = isWin
-      ? "仅 Windows 桌面版有效；64 位进程请选「64 位指针」；监控值变为 0 时截图一次，恢复非 0 后重新武装。"
+      ? "仅 Windows 桌面版有效。默认：weight.exe+0x9B8568 → 0x504 → 0x434 → 0x4 → 0x310 → 0x5EC（32 位）；读到「触发值」时截图一次，离开该值后重新武装。"
       : isDesktop
         ? "当前系统非 Windows，内存监控不可用。"
         : "仅 Windows 桌面版可用。";
@@ -219,11 +244,18 @@ function openSettings() {
     settingMemoryWatchProcessName.value = cfg.memoryWatchProcessName ?? "weight.exe";
   }
   if (settingMemoryWatchModuleOffset) {
-    settingMemoryWatchModuleOffset.value = cfg.memoryWatchModuleOffset ?? "0x9B27E0";
+    settingMemoryWatchModuleOffset.value = cfg.memoryWatchModuleOffset ?? DEFAULT_MEMORY_MODULE_OFFSET;
   }
   if (settingMemoryWatchPointerSize) {
     const ptr = Number(cfg.memoryWatchPointerSize);
-    settingMemoryWatchPointerSize.value = String(ptr === 4 || ptr === 8 || ptr === 0 ? ptr : 8);
+    settingMemoryWatchPointerSize.value = String(
+      ptr === 4 || ptr === 8 || ptr === 0 ? ptr : DEFAULT_MEMORY_POINTER_SIZE
+    );
+  }
+  if (settingMemoryWatchTriggerValue) {
+    const tv = cfg.memoryWatchTriggerValue;
+    settingMemoryWatchTriggerValue.value =
+      tv === undefined || tv === null || tv === "" ? String(DEFAULT_MEMORY_TRIGGER_VALUE) : String(tv);
   }
   if (settingMemoryWatchOffsetsList) {
     settingMemoryWatchOffsetsList.innerHTML = "";
@@ -296,13 +328,15 @@ function saveSettingsFromForm() {
   const screenshotShortcut = (settingScreenshotShortcut?.value || "").trim();
   const memoryWatchEnabled = !!settingMemoryWatchEnabled?.checked;
   const memoryWatchProcessName = (settingMemoryWatchProcessName?.value || "").trim() || "weight.exe";
-  const memoryWatchModuleOffset = (settingMemoryWatchModuleOffset?.value || "").trim() || "0x9B27E0";
+  const memoryWatchModuleOffset =
+    (settingMemoryWatchModuleOffset?.value || "").trim() || DEFAULT_MEMORY_MODULE_OFFSET;
   const memoryWatchPointerSizeRaw = Number(settingMemoryWatchPointerSize?.value);
   const memoryWatchPointerSize =
     memoryWatchPointerSizeRaw === 4 || memoryWatchPointerSizeRaw === 8 || memoryWatchPointerSizeRaw === 0
       ? memoryWatchPointerSizeRaw
-      : 8;
+      : DEFAULT_MEMORY_POINTER_SIZE;
   const memoryWatchOffsets = collectMemoryWatchOffsets();
+  const memoryWatchTriggerValue = parseTriggerValue(settingMemoryWatchTriggerValue?.value);
 
   const next = {
     ...current,
@@ -319,6 +353,7 @@ function saveSettingsFromForm() {
     memoryWatchModuleOffset,
     memoryWatchPointerSize,
     memoryWatchOffsets,
+    memoryWatchTriggerValue,
   };
   delete next.webrtcBase;
   delete next.lockFpsEnabled;

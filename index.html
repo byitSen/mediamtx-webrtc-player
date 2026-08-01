@@ -45,7 +45,6 @@
         <div class="modal-body">
           <fieldset class="settings-section">
             <legend>摄像头与布局（本地 RTSP）</legend>
-            <p class="hint">桌面版通过本地 FFmpeg 拉取 RTSP</p>
             <label>每行列数</label>
             <select id="settingGridColumns">
               <option value="2" selected>2 列</option>
@@ -109,22 +108,24 @@
             <legend>内存触发截图（Windows 桌面版）</legend>
             <label class="checkbox-label">
               <input type="checkbox" id="settingMemoryWatchEnabled" />
-              启用内存监控（值为 0 时触发一次一键截图）
+              启用内存监控（读到触发值时截图一次）
             </label>
             <label>应用进程名</label>
             <input type="text" id="settingMemoryWatchProcessName" placeholder="weight.exe" maxlength="128" />
             <label>静态基址偏移</label>
-            <input type="text" id="settingMemoryWatchModuleOffset" placeholder="0x9B27E0" maxlength="32" />
+            <input type="text" id="settingMemoryWatchModuleOffset" placeholder="0x9B8568" maxlength="32" />
             <label>指针宽度</label>
             <select id="settingMemoryWatchPointerSize">
-              <option value="8" selected>64 位（8 字节）</option>
-              <option value="4">32 位（4 字节）</option>
+              <option value="4" selected>32 位（4 字节）</option>
+              <option value="8">64 位（8 字节）</option>
               <option value="0">自动检测</option>
             </select>
             <label>多级偏移（指针链，末级为 int32 值偏移）</label>
             <div id="settingMemoryWatchOffsetsList" class="offsets-list"></div>
             <button type="button" id="settingAddMemoryOffset" class="btn secondary btn-sm">添加偏移</button>
-            <span class="hint" id="settingMemoryWatchHint">仅 Windows 桌面版有效；64 位进程请选 64 位指针；监控值变为 0 时截图一次。</span>
+            <label>触发值（自定义，读到该值时截图）</label>
+            <input type="text" id="settingMemoryWatchTriggerValue" placeholder="0" maxlength="32" />
+            <span class="hint" id="settingMemoryWatchHint">仅 Windows 桌面版有效。默认链：weight.exe+0x9B8568 → 0x504 → 0x434 → 0x4 → 0x310 → 0x5EC（32 位）。触发值支持十进制或 0x 十六进制。</span>
           </fieldset>
         </div>
         <div class="modal-footer">
@@ -135,7 +136,6 @@
     </div>
 
     <footer class="footer">
-      <span>本地 FFmpeg RTSP 代理。</span>
       <span id="appVersion" class="app-version" aria-label="应用版本"></span>
     </footer>
 

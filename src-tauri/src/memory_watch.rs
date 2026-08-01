@@ -1,9 +1,8 @@
 //! Windows memory watch (pointer-chain). Non-Windows: unsupported stub.
 
-#![allow(dead_code)]
-
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tauri::AppHandle;
 #[cfg(windows)]
@@ -17,11 +16,15 @@ pub struct MemoryWatchConfig {
     pub module_offset: Option<String>,
     pub offsets: Option<Vec<String>>,
     pub pointer_size: Option<u8>,
+    /// 读到该 int32 值时触发截图（默认 0）
+    #[serde(default)]
+    pub trigger_value: Option<i32>,
 }
 
 #[derive(Clone)]
 pub struct MemoryWatchState {
     inner: Arc<Mutex<WatchInner>>,
+    generation: Arc<AtomicU64>,
 }
 
 struct WatchInner {
@@ -36,11 +39,13 @@ impl MemoryWatchState {
                 stop: false,
                 config: None,
             })),
+            generation: Arc::new(AtomicU64::new(0)),
         }
     }
 }
 
 #[derive(Serialize, Clone)]
+#[serde(rename_all = "camelCase")]
 struct LogEntry {
     ts: u64,
     level: String,
@@ -63,12 +68,14 @@ pub fn update_memory_watch(
 
     #[cfg(windows)]
     {
+        // 新世代号：旧轮询线程看到 generation 变化后退出
+        let gen = state.generation.fetch_add(1, Ordering::SeqCst) + 1;
         {
             let mut g = state.inner.lock();
             g.stop = true;
             g.config = Some(cfg.clone());
         }
-        std::thread::sleep(std::time::Duration::from_millis(50));
+        std::thread::sleep(std::time::Duration::from_millis(80));
         {
             let mut g = state.inner.lock();
             g.stop = false;
@@ -88,9 +95,12 @@ pub fn update_memory_watch(
 
         let process_name = cfg
             .process_name
-            .clone()
-            .unwrap_or_else(|| "weight.exe".into());
-        let module_offset = parse_offset(cfg.module_offset.as_deref().unwrap_or("0"));
+            .as_deref()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("weight.exe")
+            .to_string();
+        let module_offset = parse_offset(cfg.module_offset.as_deref().unwrap_or("0x9B8568"));
         let offsets: Vec<u32> = cfg
             .offsets
             .clone()
@@ -98,16 +108,28 @@ pub fn update_memory_watch(
             .iter()
             .map(|s| parse_offset(s))
             .collect();
-        let pointer_size = match cfg.pointer_size.unwrap_or(8) {
+        let pointer_size = match cfg.pointer_size.unwrap_or(4) {
             4 => 4u8,
             0 => 0u8,
             _ => 8u8,
         };
+        let trigger_value = cfg.trigger_value.unwrap_or(0);
 
         let inner = state.inner.clone();
+        let generation = state.generation.clone();
         let app2 = app.clone();
         std::thread::spawn(move || {
-            windows_poll_loop(app2, inner, process_name, module_offset, offsets, pointer_size);
+            windows_poll_loop(
+                app2,
+                inner,
+                generation,
+                gen,
+                process_name,
+                module_offset,
+                offsets,
+                pointer_size,
+                trigger_value,
+            );
         });
 
         Ok(serde_json::json!({ "ok": true, "enabled": true }))
@@ -134,32 +156,99 @@ fn parse_offset(s: &str) -> u32 {
 }
 
 #[cfg(windows)]
+fn emit_log(app: &AppHandle, level: &str, msg: String) {
+    let _ = app.emit(
+        "memory-watch-log",
+        LogEntry {
+            ts: now_ms(),
+            level: level.into(),
+            message: msg,
+        },
+    );
+}
+
+#[cfg(windows)]
+fn enable_se_debug_privilege() {
+    use windows::core::w;
+    use windows::Win32::Foundation::CloseHandle;
+    use windows::Win32::Security::{
+        AdjustTokenPrivileges, LookupPrivilegeValueW, SE_PRIVILEGE_ENABLED, TOKEN_ADJUST_PRIVILEGES,
+        TOKEN_PRIVILEGES, TOKEN_QUERY, LUID_AND_ATTRIBUTES,
+    };
+    use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+    unsafe {
+        let mut token = Default::default();
+        if OpenProcessToken(
+            GetCurrentProcess(),
+            TOKEN_ADJUST_PRIVILEGES | TOKEN_QUERY,
+            &mut token,
+        )
+        .is_err()
+        {
+            return;
+        }
+        let mut luid = Default::default();
+        if LookupPrivilegeValueW(None, w!("SeDebugPrivilege"), &mut luid).is_err() {
+            let _ = CloseHandle(token);
+            return;
+        }
+        let mut tp = TOKEN_PRIVILEGES {
+            PrivilegeCount: 1,
+            Privileges: [LUID_AND_ATTRIBUTES {
+                Luid: luid,
+                Attributes: SE_PRIVILEGE_ENABLED,
+            }],
+        };
+        let _ = AdjustTokenPrivileges(token, false, Some(&mut tp), 0, None, None);
+        let _ = CloseHandle(token);
+    }
+}
+
+#[cfg(windows)]
 fn windows_poll_loop(
     app: AppHandle,
     inner: Arc<Mutex<WatchInner>>,
+    generation: Arc<AtomicU64>,
+    my_gen: u64,
     process_name: String,
     module_offset: u32,
     offsets: Vec<u32>,
     pointer_size: u8,
+    trigger_value: i32,
 ) {
     use windows::Win32::Foundation::CloseHandle;
-    use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ};
-
-    let emit = |level: &str, msg: String| {
-        let _ = app.emit(
-            "memory-watch-log",
-            LogEntry {
-                ts: now_ms(),
-                level: level.into(),
-                message: msg,
-            },
-        );
+    use windows::Win32::System::Threading::{
+        OpenProcess, PROCESS_ACCESS_RIGHTS, PROCESS_QUERY_INFORMATION, PROCESS_VM_READ,
     };
 
+    enable_se_debug_privilege();
+
     let mut armed = true;
-    emit("info", format!("内存监控已启动: {}", process_name));
+    let mut last_status_key = String::new();
+    let mut last_status_at = 0u64;
+    emit_log(
+        &app,
+        "info",
+        format!(
+            "内存监控已启动: {} module+{:#x} offsets={} ptr={} trigger={}",
+            process_name,
+            module_offset,
+            offsets.len(),
+            pointer_size,
+            trigger_value
+        ),
+    );
+
+    // PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+    const PROCESS_QUERY_LIMITED_INFORMATION: PROCESS_ACCESS_RIGHTS =
+        PROCESS_ACCESS_RIGHTS(0x1000);
+    let access = PROCESS_VM_READ | PROCESS_QUERY_INFORMATION | PROCESS_QUERY_LIMITED_INFORMATION;
 
     loop {
+        if generation.load(Ordering::SeqCst) != my_gen {
+            break;
+        }
         {
             let g = inner.lock();
             if g.stop {
@@ -172,88 +261,143 @@ fn windows_poll_loop(
             }
         }
 
+        let now = now_ms();
         let pid = match find_pid_by_name(&process_name) {
             Some(p) => p,
             None => {
+                if now.saturating_sub(last_status_at) > 2000 {
+                    let key = format!("noproc:{}", process_name);
+                    if key != last_status_key {
+                        emit_log(&app, "warn", format!("未找到进程 {}", process_name));
+                        last_status_key = key;
+                    }
+                    last_status_at = now;
+                }
                 std::thread::sleep(std::time::Duration::from_millis(500));
                 continue;
             }
         };
 
-        let access = PROCESS_VM_READ | PROCESS_QUERY_INFORMATION;
         let handle = match unsafe { OpenProcess(access, false, pid) } {
             Ok(h) => h,
-            Err(_) => {
+            Err(e) => {
+                if now.saturating_sub(last_status_at) > 2000 {
+                    emit_log(
+                        &app,
+                        "error",
+                        format!("OpenProcess 失败 pid={} ({})，可尝试管理员运行", pid, e),
+                    );
+                    last_status_at = now;
+                    last_status_key = format!("open:{}", pid);
+                }
                 std::thread::sleep(std::time::Duration::from_millis(300));
                 continue;
             }
         };
 
-        let base = module_base(handle, pid, &process_name);
+        let base = module_base(pid, &process_name);
         if base == 0 {
             unsafe {
                 let _ = CloseHandle(handle);
+            }
+            if now.saturating_sub(last_status_at) > 2000 {
+                emit_log(&app, "error", format!("获取模块基址失败 pid={}", pid));
+                last_status_at = now;
+                last_status_key = format!("mod:{}", pid);
             }
             std::thread::sleep(std::time::Duration::from_millis(300));
             continue;
         }
 
         let ptr_width = if pointer_size == 0 {
-            if is_wow64(handle) { 4 } else { 8 }
+            if is_wow64(handle) {
+                4
+            } else {
+                8
+            }
         } else {
             pointer_size
         };
 
-        let mut ok = true;
-        // p = *(base + module_offset); then p = *(p + off_i); last: i32(p + off_last)
         let start = base.wrapping_add(module_offset as u64);
+        let mut value: Option<i32> = None;
+        let mut final_addr = start;
+        let mut chain_ok = true;
+
         if offsets.is_empty() {
-            if let Some(v) = read_i32(handle, start) {
-                if v == 0 && armed {
-                    armed = false;
-                    let _ = app.emit("screenshot-trigger", ());
-                    emit("info", format!("触发截图 value=0 addr={:#x}", start));
-                } else if v != 0 {
-                    armed = true;
-                }
-            }
+            value = read_i32(handle, start);
         } else if let Some(mut p) = read_ptr(handle, start, ptr_width) {
             let last = offsets.len() - 1;
             for (i, off) in offsets.iter().enumerate() {
                 let at = p.wrapping_add(*off as u64);
                 if i == last {
-                    match read_i32(handle, at) {
-                        Some(v) => {
-                            if v == 0 && armed {
-                                armed = false;
-                                let _ = app.emit("screenshot-trigger", ());
-                                emit("info", format!("触发截图 value=0 addr={:#x}", at));
-                            } else if v != 0 {
-                                armed = true;
-                            }
-                        }
-                        None => ok = false,
+                    final_addr = at;
+                    value = read_i32(handle, at);
+                    if value.is_none() {
+                        chain_ok = false;
                     }
                 } else {
                     match read_ptr(handle, at, ptr_width) {
                         Some(next) => p = next,
                         None => {
-                            ok = false;
+                            chain_ok = false;
                             break;
                         }
                     }
                 }
             }
-            let _ = ok;
+        } else {
+            chain_ok = false;
         }
 
         unsafe {
             let _ = CloseHandle(handle);
         }
+
+        if let Some(v) = value {
+            if now.saturating_sub(last_status_at) > 1000 {
+                emit_log(
+                    &app,
+                    "info",
+                    format!(
+                        "监听成功 value={} armed={} ptr{} final={:#x}",
+                        v,
+                        if armed { "yes" } else { "no" },
+                        ptr_width,
+                        final_addr
+                    ),
+                );
+                last_status_at = now;
+                last_status_key = format!("ok:{}:{}", pid, v);
+            }
+            if v == trigger_value && armed {
+                armed = false;
+                let _ = app.emit("screenshot-trigger", ());
+                emit_log(
+                    &app,
+                    "trigger",
+                    format!(
+                        "触发截图：value={} @ {:#x}",
+                        v, final_addr
+                    ),
+                );
+            } else if v != trigger_value {
+                armed = true;
+            }
+        } else if !chain_ok && now.saturating_sub(last_status_at) > 2000 {
+            emit_log(
+                &app,
+                "warn",
+                format!("指针链读取失败 base={:#x} start={:#x}", base, start),
+            );
+            last_status_at = now;
+            last_status_key = format!("chain:{}", pid);
+        }
+
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
 
-    emit("info", "内存监控已停止".into());
+    emit_log(&app, "info", "内存监控已停止".into());
 }
 
 #[cfg(windows)]
@@ -268,6 +412,7 @@ fn find_pid_by_name(name: &str) -> Option<u32> {
         ..Default::default()
     };
     let target = name.to_ascii_lowercase();
+    let target_leaf = target.rsplit(['/', '\\']).next().unwrap_or(&target);
     unsafe {
         if Process32FirstW(snap, &mut pe).is_ok() {
             loop {
@@ -279,7 +424,11 @@ fn find_pid_by_name(name: &str) -> Option<u32> {
                         .collect::<Vec<_>>(),
                 )
                 .to_ascii_lowercase();
-                if exe == target || exe.ends_with(&target) {
+                let leaf = target_leaf.trim_end_matches(".exe");
+                if exe == target
+                    || exe == target_leaf
+                    || exe.trim_end_matches(".exe") == leaf
+                {
                     let pid = pe.th32ProcessID;
                     let _ = CloseHandle(snap);
                     return Some(pid);
@@ -295,7 +444,7 @@ fn find_pid_by_name(name: &str) -> Option<u32> {
 }
 
 #[cfg(windows)]
-fn module_base(handle: windows::Win32::Foundation::HANDLE, pid: u32, name: &str) -> u64 {
+fn module_base(pid: u32, name: &str) -> u64 {
     use windows::Win32::Foundation::CloseHandle;
     use windows::Win32::System::Diagnostics::ToolHelp::{
         CreateToolhelp32Snapshot, Module32FirstW, Module32NextW, MODULEENTRY32W, TH32CS_SNAPMODULE,
@@ -311,7 +460,9 @@ fn module_base(handle: windows::Win32::Foundation::HANDLE, pid: u32, name: &str)
         ..Default::default()
     };
     let target = name.to_ascii_lowercase();
-    let mut base = 0u64;
+    let target_leaf = target.rsplit(['/', '\\']).next().unwrap_or(&target);
+    let mut first_base = 0u64;
+    let mut matched = 0u64;
     unsafe {
         if Module32FirstW(snap, &mut me).is_ok() {
             loop {
@@ -323,11 +474,14 @@ fn module_base(handle: windows::Win32::Foundation::HANDLE, pid: u32, name: &str)
                         .collect::<Vec<_>>(),
                 )
                 .to_ascii_lowercase();
-                if mod_name == target || base == 0 {
-                    base = me.modBaseAddr as u64;
-                    if mod_name == target {
-                        break;
-                    }
+                let base = me.modBaseAddr as u64;
+                if first_base == 0 {
+                    first_base = base;
+                }
+                if mod_name == target || mod_name == target_leaf || target_leaf.ends_with(&mod_name)
+                {
+                    matched = base;
+                    break;
                 }
                 if Module32NextW(snap, &mut me).is_err() {
                     break;
@@ -335,13 +489,23 @@ fn module_base(handle: windows::Win32::Foundation::HANDLE, pid: u32, name: &str)
             }
         }
         let _ = CloseHandle(snap);
-        let _ = handle; // silence
     }
-    base
+    if matched != 0 {
+        matched
+    } else {
+        first_base
+    }
 }
 
 #[cfg(windows)]
-fn is_wow64(_handle: windows::Win32::Foundation::HANDLE) -> bool {
+fn is_wow64(handle: windows::Win32::Foundation::HANDLE) -> bool {
+    use windows::Win32::System::Threading::IsWow64Process;
+    let mut wow = windows::core::BOOL(0);
+    unsafe {
+        if IsWow64Process(handle, &mut wow).is_ok() {
+            return wow.as_bool();
+        }
+    }
     false
 }
 
@@ -378,7 +542,12 @@ fn read_ptr(handle: windows::Win32::Foundation::HANDLE, addr: u64, width: u8) ->
             if read != 8 {
                 return None;
             }
-            Some(v)
+            // 非规范 64 位指针：高位异常时截断为 32 位（与 Electron 行为一致）
+            if v > 0x0000_FFFF_FFFF_FFFFu64 && (v >> 32) != 0 {
+                Some(v & 0xFFFF_FFFF)
+            } else {
+                Some(v)
+            }
         }
     }
 }

@@ -3,6 +3,7 @@ import { initPlayers, getPlayerInstances, applyGridColumns } from "./layout.js";
 import { setMaxActiveConnections } from "./webrtc-pool.js";
 import { dataUrlToBase64 } from "./utils.js";
 import { installDesktopGlobals, isDesktopEnv } from "./desktop.js";
+import { setStartupWindowGeometry } from "./player.js";
 
 const SCREENSHOT_INTERVAL_MS = 200;
 const DESKTOP_SAVE_DIR_KEY = "desktop_screenshot_dir";
@@ -349,7 +350,11 @@ function saveSettingsFromForm() {
   saveSettings(next);
 
   if (isElectronEnv()) {
-    if (window.electronAPI.setWindowSize) window.electronAPI.setWindowSize(windowWidth, windowHeight);
+    if (window.electronAPI.setWindowSize) {
+      window.electronAPI.setWindowSize(windowWidth, windowHeight);
+      setStartupWindowGeometry({ width: windowWidth, height: windowHeight });
+      captureStartupWindowPosition(windowWidth, windowHeight);
+    }
     if (window.electronAPI.registerScreenshotShortcut) window.electronAPI.registerScreenshotShortcut(screenshotShortcut || null);
     applyMemoryWatchConfig(next);
   }
@@ -656,10 +661,11 @@ window.addEventListener("load", async () => {
       const w = cfg.windowWidth ?? 1020;
       const h = cfg.windowHeight ?? 820;
       if (Number.isFinite(w) && Number.isFinite(h)) {
-        window.electronAPI.setWindowSize(
-          Math.max(WINDOW_WIDTH_MIN, Math.min(WINDOW_WIDTH_MAX, w)),
-          Math.max(WINDOW_HEIGHT_MIN, Math.min(WINDOW_HEIGHT_MAX, h))
-        );
+        const width = Math.max(WINDOW_WIDTH_MIN, Math.min(WINDOW_WIDTH_MAX, w));
+        const height = Math.max(WINDOW_HEIGHT_MIN, Math.min(WINDOW_HEIGHT_MAX, h));
+        window.electronAPI.setWindowSize(width, height);
+        setStartupWindowGeometry({ width, height });
+        captureStartupWindowPosition(width, height);
       }
     }
     if (window.electronAPI.registerScreenshotShortcut) {
@@ -669,3 +675,20 @@ window.addEventListener("load", async () => {
     window.addEventListener("screenshot-trigger", () => batchScreenshot());
   }
 });
+
+async function captureStartupWindowPosition(width, height) {
+  const api = window.electronAPI;
+  if (!api?.getWindowSize) return;
+  try {
+    await new Promise((r) => setTimeout(r, 80));
+    const size = await api.getWindowSize();
+    if (size?.width && size?.height) {
+      setStartupWindowGeometry({
+        width,
+        height,
+        x: typeof size.x === "number" ? size.x : undefined,
+        y: typeof size.y === "number" ? size.y : undefined,
+      });
+    }
+  } catch (_) {}
+}

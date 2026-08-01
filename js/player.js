@@ -264,8 +264,15 @@ export class Player {
 
     if (isFull) {
       card.classList.remove("fullscreen-mode");
+      document.body.classList.remove("app-player-fullscreen");
       document.body.style.overflow = "";
       card.style.cursor = "";
+      // 移回网格原位
+      if (this._fullscreenPlaceholder?.parentNode) {
+        this._fullscreenPlaceholder.parentNode.insertBefore(card, this._fullscreenPlaceholder);
+        this._fullscreenPlaceholder.remove();
+      }
+      this._fullscreenPlaceholder = null;
       if (this._fullscreenWheelHandler) {
         card.removeEventListener("wheel", this._fullscreenWheelHandler, { passive: false });
         this._fullscreenWheelHandler = null;
@@ -290,7 +297,18 @@ export class Player {
         this._savedWindowSize = null;
       }
     } else {
-      // 先进入应用内全屏，窗口尺寸失败不影响画面铺满
+      // 退出其他卡片的全屏
+      document.querySelectorAll(".player-card.fullscreen-mode").forEach((el) => {
+        if (el !== card) el.classList.remove("fullscreen-mode");
+      });
+
+      // 挂到 body，避免 main/grid 的 overflow 影响 fixed 铺满
+      if (!this._fullscreenPlaceholder) {
+        this._fullscreenPlaceholder = document.createComment("player-fullscreen-anchor");
+        card.parentNode?.insertBefore(this._fullscreenPlaceholder, card);
+        document.body.appendChild(card);
+      }
+
       this.fullscreenZoom = 1;
       this.fullscreenPan = { x: 0, y: 0 };
       this._fullscreenWheelHandler = (e) => this._onFullscreenWheel(e);
@@ -310,6 +328,7 @@ export class Player {
       card.style.cursor = "grab";
       this._applyFullscreenTransform();
       card.classList.add("fullscreen-mode");
+      document.body.classList.add("app-player-fullscreen");
       document.body.style.overflow = "hidden";
 
       if (api?.getWindowSize && api.setWindowSize) {
@@ -408,6 +427,20 @@ export class Player {
   }
 
   destroy() {
+    if (this.containerEl?.classList.contains("fullscreen-mode")) {
+      try {
+        this.containerEl.classList.remove("fullscreen-mode");
+        document.body.classList.remove("app-player-fullscreen");
+        if (this._fullscreenPlaceholder?.parentNode) {
+          this._fullscreenPlaceholder.parentNode.insertBefore(
+            this.containerEl,
+            this._fullscreenPlaceholder
+          );
+          this._fullscreenPlaceholder.remove();
+        }
+      } catch (_) {}
+      this._fullscreenPlaceholder = null;
+    }
     this.clearReconnectTimer();
     this.stopStatsTimer();
     void this.closePeer();

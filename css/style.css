@@ -231,22 +231,41 @@ main {
   color: #9ca3af;
 }
 
-/* 应用内全屏模式：视频铺满可用区域，随窗口缩放动态适应，按比例裁剪避免黑边 */
+/* 应用内全屏模式：挂到 body 后铺满视口，盖过顶栏 */
 .player-card.fullscreen-mode {
-  position: fixed;
-  inset: 0;
-  margin: 0;
-  z-index: 10000;
+  position: fixed !important;
+  inset: 0 !important;
+  width: 100vw !important;
+  height: 100vh !important;
+  max-width: none !important;
+  max-height: none !important;
+  margin: 0 !important;
+  z-index: 20000;
   border-radius: 0;
+  border: none;
   display: flex;
   flex-direction: column;
+  background: #020617;
+}
+
+body.app-player-fullscreen .top-bar,
+body.app-player-fullscreen > footer.footer,
+body.app-player-fullscreen .status-panel {
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.player-card.fullscreen-mode .player-header,
+.player-card.fullscreen-mode .player-footer {
+  flex: 0 0 auto;
 }
 
 .player-card.fullscreen-mode .video-wrapper {
   flex: 1 1 0;
   min-height: 0;
   width: 100%;
-  aspect-ratio: auto;
+  height: auto;
+  aspect-ratio: auto !important;
   position: relative;
   overflow: hidden;
   display: flex;

@@ -255,48 +255,11 @@ export class Player {
     }
   }
 
-  async _restoreWindowAfterPlayerFullscreen() {
-    const api = typeof window !== "undefined" && window.electronAPI;
-    const saved = this._savedWindowSize;
-    this._savedWindowSize = null;
-    if (!api || !saved) return;
-    try {
-      // 进入前已是系统全屏：只退画面 UI，保持系统全屏
-      if (saved.fullscreen) {
-        if (api.setWindowFullscreen) {
-          const stillFs = api.isWindowFullscreen ? !!(await api.isWindowFullscreen()) : false;
-          if (!stillFs) await api.setWindowFullscreen(true);
-        }
-        return;
-      }
-      // 退出系统全屏，恢复进入前的普通几何，必要时再最大化
-      if (api.setWindowFullscreen) await api.setWindowFullscreen(false);
-      if (saved.width && saved.height) {
-        if (api.restoreWindowGeometry) {
-          await api.restoreWindowGeometry({
-            width: saved.width,
-            height: saved.height,
-            x: saved.x,
-            y: saved.y,
-          });
-        } else if (api.setWindowSize) {
-          await api.setWindowSize(saved.width, saved.height);
-        }
-      }
-      if (saved.maximized && api.maximizeWindow) {
-        await api.maximizeWindow();
-      }
-    } catch (e) {
-      console.warn("restore window after player fullscreen:", e);
-    }
-  }
-
-  /** 画面全屏：主窗口进入系统全屏 + 卡片铺满；退出时恢复进入前窗口状态 */
-  async toggleFullscreenInApp() {
+  /** 画面全屏：仅在主窗口内铺满（不改系统全屏/窗口尺寸） */
+  toggleFullscreenInApp() {
     const card = this.containerEl;
     const isFull = card.classList.contains("fullscreen-mode");
     const media = this.dom.video;
-    const api = typeof window !== "undefined" && window.electronAPI;
 
     if (isFull) {
       card.classList.remove("fullscreen-mode");
@@ -318,43 +281,7 @@ export class Player {
       this.fullscreenPan = { x: 0, y: 0 };
       this._fullscreenDragging = false;
       this._fullscreenDragStart = null;
-      await this._restoreWindowAfterPlayerFullscreen();
       return;
-    }
-
-    if (api?.setWindowFullscreen) {
-      try {
-        const size = api.getWindowSize ? await api.getWindowSize() : null;
-        const maximized = !!(api.isWindowMaximized && (await api.isWindowMaximized()));
-        const fullscreen = !!(api.isWindowFullscreen && (await api.isWindowFullscreen()));
-        this._savedWindowSize = {
-          width: size?.width || 0,
-          height: size?.height || 0,
-          x: typeof size?.x === "number" ? size.x : undefined,
-          y: typeof size?.y === "number" ? size.y : undefined,
-          maximized,
-          fullscreen,
-        };
-
-        // 最大化时先还原，记下真正的普通尺寸，再进系统全屏
-        if (!fullscreen && maximized && api.unmaximizeWindow) {
-          await api.unmaximizeWindow();
-          await new Promise((r) => setTimeout(r, 40));
-          const normal = api.getWindowSize ? await api.getWindowSize() : null;
-          if (normal?.width && normal?.height) {
-            this._savedWindowSize.width = normal.width;
-            this._savedWindowSize.height = normal.height;
-            if (typeof normal.x === "number") this._savedWindowSize.x = normal.x;
-            if (typeof normal.y === "number") this._savedWindowSize.y = normal.y;
-          }
-        }
-
-        if (!fullscreen) {
-          await api.setWindowFullscreen(true);
-        }
-      } catch (e) {
-        console.warn("enter system fullscreen:", e);
-      }
     }
 
     this.fullscreenZoom = 1;
@@ -462,7 +389,7 @@ export class Player {
       this.containerEl.classList.remove("fullscreen-mode");
       document.body.style.overflow = "";
       this.containerEl.style.cursor = "";
-      void this._restoreWindowAfterPlayerFullscreen();
+      this._savedWindowSize = null;
     }
     this.clearReconnectTimer();
     this.stopStatsTimer();

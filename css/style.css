@@ -233,7 +233,7 @@ main {
   color: #9ca3af;
 }
 
-/* 应用内全屏（对齐 Electron）：铺满当前窗口，随窗口缩放；滚轮/拖拽缩放平移 */
+/* 应用内全屏：仅在主窗口客户区内铺满；滚轮/拖拽缩放平移 */
 .player-card.fullscreen-mode {
   position: fixed;
   inset: 0;

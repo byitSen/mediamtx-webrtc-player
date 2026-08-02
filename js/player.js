@@ -1,4 +1,3 @@
-import { getEffectiveSettings } from "./config.js";
 import { formatTimestamp, saveImageToPath } from "./utils.js";
 import { RtspMsePlayer, pickMseCodec } from "./rtsp-mse-player.js";
 
@@ -260,22 +259,31 @@ export class Player {
     const api = typeof window !== "undefined" && window.electronAPI;
     const saved = this._savedWindowSize;
     this._savedWindowSize = null;
-    if (!api || !saved?.width || !saved?.height) return;
+    if (!api || !saved) return;
     try {
-      // 先回到进入画面全屏前的「普通」几何，再按原状态最大化 / 系统全屏
-      if (api.restoreWindowGeometry) {
-        await api.restoreWindowGeometry({
-          width: saved.width,
-          height: saved.height,
-          x: saved.x,
-          y: saved.y,
-        });
-      } else if (api.setWindowSize) {
-        await api.setWindowSize(saved.width, saved.height);
+      // 进入前已是系统全屏：只退画面 UI，保持系统全屏
+      if (saved.fullscreen) {
+        if (api.setWindowFullscreen) {
+          const stillFs = api.isWindowFullscreen ? !!(await api.isWindowFullscreen()) : false;
+          if (!stillFs) await api.setWindowFullscreen(true);
+        }
+        return;
       }
-      if (saved.fullscreen && api.setWindowFullscreen) {
-        await api.setWindowFullscreen(true);
-      } else if (saved.maximized && api.maximizeWindow) {
+      // 退出系统全屏，恢复进入前的普通几何，必要时再最大化
+      if (api.setWindowFullscreen) await api.setWindowFullscreen(false);
+      if (saved.width && saved.height) {
+        if (api.restoreWindowGeometry) {
+          await api.restoreWindowGeometry({
+            width: saved.width,
+            height: saved.height,
+            x: saved.x,
+            y: saved.y,
+          });
+        } else if (api.setWindowSize) {
+          await api.setWindowSize(saved.width, saved.height);
+        }
+      }
+      if (saved.maximized && api.maximizeWindow) {
         await api.maximizeWindow();
       }
     } catch (e) {
@@ -283,7 +291,7 @@ export class Player {
     }
   }
 
-  /** 对齐 Electron：卡片铺满窗口并缩放到设置尺寸；退出时恢复进入前尺寸与最大化/系统全屏状态 */
+  /** 画面全屏：主窗口进入系统全屏 + 卡片铺满；退出时恢复进入前窗口状态 */
   async toggleFullscreenInApp() {
     const card = this.containerEl;
     const isFull = card.classList.contains("fullscreen-mode");
@@ -314,45 +322,38 @@ export class Player {
       return;
     }
 
-    if (api?.getWindowSize && api.setWindowSize) {
+    if (api?.setWindowFullscreen) {
       try {
-        const size = await api.getWindowSize();
+        const size = api.getWindowSize ? await api.getWindowSize() : null;
         const maximized = !!(api.isWindowMaximized && (await api.isWindowMaximized()));
         const fullscreen = !!(api.isWindowFullscreen && (await api.isWindowFullscreen()));
-        if (size?.width && size?.height) {
-          this._savedWindowSize = {
-            width: size.width,
-            height: size.height,
-            x: typeof size.x === "number" ? size.x : undefined,
-            y: typeof size.y === "number" ? size.y : undefined,
-            maximized,
-            fullscreen,
-          };
+        this._savedWindowSize = {
+          width: size?.width || 0,
+          height: size?.height || 0,
+          x: typeof size?.x === "number" ? size.x : undefined,
+          y: typeof size?.y === "number" ? size.y : undefined,
+          maximized,
+          fullscreen,
+        };
 
-          // 先退出系统全屏/最大化，再读取真正的还原尺寸（避免退出时按「铺满像素」恢复导致无法再还原）
-          if (fullscreen && api.setWindowFullscreen) {
-            await api.setWindowFullscreen(false);
-          } else if (maximized && api.unmaximizeWindow) {
-            await api.unmaximizeWindow();
+        // 最大化时先还原，记下真正的普通尺寸，再进系统全屏
+        if (!fullscreen && maximized && api.unmaximizeWindow) {
+          await api.unmaximizeWindow();
+          await new Promise((r) => setTimeout(r, 40));
+          const normal = api.getWindowSize ? await api.getWindowSize() : null;
+          if (normal?.width && normal?.height) {
+            this._savedWindowSize.width = normal.width;
+            this._savedWindowSize.height = normal.height;
+            if (typeof normal.x === "number") this._savedWindowSize.x = normal.x;
+            if (typeof normal.y === "number") this._savedWindowSize.y = normal.y;
           }
-          if (fullscreen || maximized) {
-            await new Promise((r) => setTimeout(r, 40));
-            const normal = await api.getWindowSize();
-            if (normal?.width && normal?.height) {
-              this._savedWindowSize.width = normal.width;
-              this._savedWindowSize.height = normal.height;
-              if (typeof normal.x === "number") this._savedWindowSize.x = normal.x;
-              if (typeof normal.y === "number") this._savedWindowSize.y = normal.y;
-            }
-          }
+        }
 
-          const cfg = getEffectiveSettings();
-          const fw = Math.max(520, Math.min(3840, cfg.fullscreenWidth ?? 1240));
-          const fh = Math.max(420, Math.min(2160, cfg.fullscreenHeight ?? 800));
-          await api.setWindowSize(fw, fh);
+        if (!fullscreen) {
+          await api.setWindowFullscreen(true);
         }
       } catch (e) {
-        console.warn("set fullscreen window size:", e);
+        console.warn("enter system fullscreen:", e);
       }
     }
 

@@ -77,18 +77,59 @@ async fn choose_save_dir(app: AppHandle) -> Result<Option<String>, String> {
     Ok(rx.await.unwrap_or(None))
 }
 
+fn clear_window_chrome_state(win: &tauri::WebviewWindow) {
+    // macOS 系统全屏 / Windows 最大化时 set_size 会被忽略或破坏还原尺寸
+    let _ = win.set_fullscreen(false);
+    let _ = win.unmaximize();
+}
+
 #[tauri::command]
 fn set_window_size(app: AppHandle, width: u32, height: u32) -> Result<(), String> {
     let w = width.clamp(520, 8192);
     let h = height.clamp(420, 8192);
     if let Some(win) = app.get_webview_window("main") {
-        // Windows：最大化状态下 set_size 常被忽略
-        let _ = win.unmaximize();
+        clear_window_chrome_state(&win);
         win.set_size(tauri::Size::Logical(tauri::LogicalSize {
             width: w as f64,
             height: h as f64,
         }))
         .map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn is_window_maximized(app: AppHandle) -> Result<bool, String> {
+    if let Some(win) = app.get_webview_window("main") {
+        return win.is_maximized().map_err(|e| e.to_string());
+    }
+    Ok(false)
+}
+
+#[tauri::command]
+fn is_window_fullscreen(app: AppHandle) -> Result<bool, String> {
+    if let Some(win) = app.get_webview_window("main") {
+        return win.is_fullscreen().map_err(|e| e.to_string());
+    }
+    Ok(false)
+}
+
+#[tauri::command]
+fn maximize_window(app: AppHandle) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("main") {
+        let _ = win.set_fullscreen(false);
+        win.maximize().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
+fn set_window_fullscreen(app: AppHandle, fullscreen: bool) -> Result<(), String> {
+    if let Some(win) = app.get_webview_window("main") {
+        if fullscreen {
+            let _ = win.unmaximize();
+        }
+        win.set_fullscreen(fullscreen).map_err(|e| e.to_string())?;
     }
     Ok(())
 }
@@ -143,7 +184,7 @@ fn get_screen_size(app: AppHandle) -> Result<Option<serde_json::Value>, String> 
 #[tauri::command]
 fn set_window_position(app: AppHandle, x: i32, y: i32) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("main") {
-        let _ = win.unmaximize();
+        clear_window_chrome_state(&win);
         win.set_position(tauri::Position::Logical(tauri::LogicalPosition {
             x: x as f64,
             y: y as f64,
@@ -156,12 +197,12 @@ fn set_window_position(app: AppHandle, x: i32, y: i32) -> Result<(), String> {
 #[tauri::command]
 fn unmaximize_window(app: AppHandle) -> Result<(), String> {
     if let Some(win) = app.get_webview_window("main") {
-        win.unmaximize().map_err(|e| e.to_string())?;
+        clear_window_chrome_state(&win);
     }
     Ok(())
 }
 
-/// 恢复窗口几何（先取消最大化，再设位置与尺寸；Windows 必需）
+/// 恢复窗口几何（先退出系统全屏/最大化，再设位置与尺寸）
 #[tauri::command]
 fn restore_window_geometry(
     app: AppHandle,
@@ -173,7 +214,7 @@ fn restore_window_geometry(
     let w = width.clamp(520, 8192);
     let h = height.clamp(420, 8192);
     if let Some(win) = app.get_webview_window("main") {
-        let _ = win.unmaximize();
+        clear_window_chrome_state(&win);
         if let (Some(px), Some(py)) = (x, y) {
             let _ = win.set_position(tauri::Position::Logical(tauri::LogicalPosition {
                 x: px as f64,
@@ -255,6 +296,10 @@ pub fn run() {
             get_window_size,
             get_screen_size,
             set_window_position,
+            is_window_maximized,
+            is_window_fullscreen,
+            maximize_window,
+            set_window_fullscreen,
             unmaximize_window,
             restore_window_geometry,
             register_screenshot_shortcut,

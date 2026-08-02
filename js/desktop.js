@@ -66,6 +66,10 @@ export const desktopAPI = {
   getWindowSize: () => safeInvoke("get_window_size"),
   getScreenSize: () => safeInvoke("get_screen_size"),
   setWindowPosition: (x, y) => safeInvoke("set_window_position", { x, y }),
+  isWindowMaximized: () => safeInvoke("is_window_maximized"),
+  isWindowFullscreen: () => safeInvoke("is_window_fullscreen"),
+  maximizeWindow: () => safeInvoke("maximize_window"),
+  setWindowFullscreen: (fullscreen) => safeInvoke("set_window_fullscreen", { fullscreen: !!fullscreen }),
   unmaximizeWindow: () => safeInvoke("unmaximize_window"),
   restoreWindowGeometry: (opts) =>
     safeInvoke("restore_window_geometry", {
@@ -117,6 +121,10 @@ export function installDesktopGlobals() {
     getWindowSize: desktopAPI.getWindowSize,
     getScreenSize: desktopAPI.getScreenSize,
     setWindowPosition: desktopAPI.setWindowPosition,
+    isWindowMaximized: desktopAPI.isWindowMaximized,
+    isWindowFullscreen: desktopAPI.isWindowFullscreen,
+    maximizeWindow: desktopAPI.maximizeWindow,
+    setWindowFullscreen: desktopAPI.setWindowFullscreen,
     unmaximizeWindow: desktopAPI.unmaximizeWindow,
     restoreWindowGeometry: desktopAPI.restoreWindowGeometry,
     registerScreenshotShortcut: desktopAPI.registerScreenshotShortcut,

@@ -256,7 +256,34 @@ export class Player {
     }
   }
 
-  /** 对齐 Electron：卡片 fixed 铺满当前窗口；窗口缩放到设置中的全屏尺寸，退出时恢复进入前尺寸 */
+  async _restoreWindowAfterPlayerFullscreen() {
+    const api = typeof window !== "undefined" && window.electronAPI;
+    const saved = this._savedWindowSize;
+    this._savedWindowSize = null;
+    if (!api || !saved?.width || !saved?.height) return;
+    try {
+      // 先回到进入画面全屏前的「普通」几何，再按原状态最大化 / 系统全屏
+      if (api.restoreWindowGeometry) {
+        await api.restoreWindowGeometry({
+          width: saved.width,
+          height: saved.height,
+          x: saved.x,
+          y: saved.y,
+        });
+      } else if (api.setWindowSize) {
+        await api.setWindowSize(saved.width, saved.height);
+      }
+      if (saved.fullscreen && api.setWindowFullscreen) {
+        await api.setWindowFullscreen(true);
+      } else if (saved.maximized && api.maximizeWindow) {
+        await api.maximizeWindow();
+      }
+    } catch (e) {
+      console.warn("restore window after player fullscreen:", e);
+    }
+  }
+
+  /** 对齐 Electron：卡片铺满窗口并缩放到设置尺寸；退出时恢复进入前尺寸与最大化/系统全屏状态 */
   async toggleFullscreenInApp() {
     const card = this.containerEl;
     const isFull = card.classList.contains("fullscreen-mode");
@@ -283,23 +310,42 @@ export class Player {
       this.fullscreenPan = { x: 0, y: 0 };
       this._fullscreenDragging = false;
       this._fullscreenDragStart = null;
-      if (api?.setWindowSize && this._savedWindowSize) {
-        const { width, height } = this._savedWindowSize;
-        try {
-          await api.setWindowSize(width, height);
-        } catch (e) {
-          console.warn("restore window size:", e);
-        }
-        this._savedWindowSize = null;
-      }
+      await this._restoreWindowAfterPlayerFullscreen();
       return;
     }
 
     if (api?.getWindowSize && api.setWindowSize) {
       try {
         const size = await api.getWindowSize();
+        const maximized = !!(api.isWindowMaximized && (await api.isWindowMaximized()));
+        const fullscreen = !!(api.isWindowFullscreen && (await api.isWindowFullscreen()));
         if (size?.width && size?.height) {
-          this._savedWindowSize = { width: size.width, height: size.height };
+          this._savedWindowSize = {
+            width: size.width,
+            height: size.height,
+            x: typeof size.x === "number" ? size.x : undefined,
+            y: typeof size.y === "number" ? size.y : undefined,
+            maximized,
+            fullscreen,
+          };
+
+          // 先退出系统全屏/最大化，再读取真正的还原尺寸（避免退出时按「铺满像素」恢复导致无法再还原）
+          if (fullscreen && api.setWindowFullscreen) {
+            await api.setWindowFullscreen(false);
+          } else if (maximized && api.unmaximizeWindow) {
+            await api.unmaximizeWindow();
+          }
+          if (fullscreen || maximized) {
+            await new Promise((r) => setTimeout(r, 40));
+            const normal = await api.getWindowSize();
+            if (normal?.width && normal?.height) {
+              this._savedWindowSize.width = normal.width;
+              this._savedWindowSize.height = normal.height;
+              if (typeof normal.x === "number") this._savedWindowSize.x = normal.x;
+              if (typeof normal.y === "number") this._savedWindowSize.y = normal.y;
+            }
+          }
+
           const cfg = getEffectiveSettings();
           const fw = Math.max(520, Math.min(3840, cfg.fullscreenWidth ?? 1240));
           const fh = Math.max(420, Math.min(2160, cfg.fullscreenHeight ?? 800));
@@ -415,12 +461,7 @@ export class Player {
       this.containerEl.classList.remove("fullscreen-mode");
       document.body.style.overflow = "";
       this.containerEl.style.cursor = "";
-      const api = typeof window !== "undefined" && window.electronAPI;
-      if (api?.setWindowSize && this._savedWindowSize) {
-        const { width, height } = this._savedWindowSize;
-        void api.setWindowSize(width, height);
-        this._savedWindowSize = null;
-      }
+      void this._restoreWindowAfterPlayerFullscreen();
     }
     this.clearReconnectTimer();
     this.stopStatsTimer();

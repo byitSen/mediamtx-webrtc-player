@@ -117,7 +117,8 @@ main {
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
   opacity: 0;
   transition: opacity 0.2s ease, transform 0.2s ease;
-  z-index: 10000;
+  /* 高于画面全屏(20000)与顶栏(21000)，避免全屏截图成功提示被遮挡 */
+  z-index: 40000;
   pointer-events: none;
 }
 .toast-message.toast-visible {

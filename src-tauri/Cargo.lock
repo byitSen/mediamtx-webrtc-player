@@ -1773,7 +1773,7 @@ dependencies = [
 
 [[package]]
 name = "monitor-player"
-version = "3.0.12"
+version = "3.0.13"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

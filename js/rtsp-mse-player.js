@@ -115,8 +115,9 @@ export class RtspMsePlayer {
           this.sourceBuffer.mode = "sequence";
           this.sourceBuffer.addEventListener("updateend", () => {
             this.isUpdating = false;
-            this._trimAndChase();
+            // 优先消化 append 队列，避免 trim/remove 占住 SourceBuffer
             this._processQueue();
+            if (!this.isUpdating) this._trimAndChase();
           });
           this.sourceBuffer.addEventListener("error", () => {
             this._emitError("SourceBuffer 错误");
@@ -226,6 +227,16 @@ export class RtspMsePlayer {
     }
   }
 
+  _softSeekLiveEdge() {
+    const sb = this.sourceBuffer;
+    const v = this.video;
+    if (!sb || !v || !sb.buffered.length) return;
+    try {
+      const end = sb.buffered.end(sb.buffered.length - 1);
+      v.currentTime = Math.max(0, end - 0.45);
+    } catch (_) {}
+  }
+
   _processQueue() {
     if (this.isUpdating || !this.sourceBuffer || this.queue.length === 0) return;
     if (this.sourceBuffer.updating) return;
@@ -246,7 +257,13 @@ export class RtspMsePlayer {
         setTimeout(() => this._processQueue(), 50);
         return;
       }
-      if (this.queue.length > 80) this.queue.splice(0, this.queue.length - 30);
+      // 背压：整队清空 + 温和 seek，禁止 splice 丢中间 fragment
+      if (this.queue.length > 80) {
+        this.queue.length = 0;
+        this._softSeekLiveEdge();
+      } else {
+        this.queue.unshift(chunk);
+      }
       setTimeout(() => this._processQueue(), 20);
     }
   }
@@ -277,9 +294,10 @@ export class RtspMsePlayer {
       const start = sb.buffered.start(0);
       const end = sb.buffered.end(sb.buffered.length - 1);
       const ct = v.currentTime || 0;
+      const lag = end - ct;
 
-      // 只保留约 3s 历史，避免缓冲区撑满后卡住
-      if (ct - start > 3.5) {
+      // 队列非空时让路给 append，避免 remove 堵住更新
+      if (this.queue.length === 0 && ct - start > 3.5) {
         const removeEnd = Math.max(start + 0.1, ct - 2);
         if (removeEnd > start) {
           sb.remove(start, removeEnd);
@@ -288,10 +306,9 @@ export class RtspMsePlayer {
         }
       }
 
-      // 追直播边缘：落后太多则跳近；贴边卡住时轻推
-      const lag = end - ct;
-      if (lag > 1.2) {
-        v.currentTime = Math.max(0, end - 0.25);
+      // 追直播边缘：阈值放宽，减少硬 seek 跳变
+      if (lag > 2.0) {
+        v.currentTime = Math.max(0, end - 0.45);
       } else if (lag < 0.05 && lag >= 0 && !v.paused) {
         // 已播到缓冲末尾：等下一片；若 waiting 过久由 watchdog 继续 play
       }
@@ -308,9 +325,9 @@ export class RtspMsePlayer {
     this._stopWatchdog();
     this._watchTimer = setInterval(() => {
       if (this.destroyed || !this.video) return;
-      // 有数据却暂停/卡在缓冲末尾时强制推进
-      this._trimAndChase();
+      // 优先 append，再 trim/chase
       if (!this.isUpdating && this.queue.length) this._processQueue();
+      if (!this.isUpdating) this._trimAndChase();
       // rvfc 在 seek/重建后可能中断，播放中则补挂
       if (this._statsTimer && this._rvfcHandle == null && !this.video.paused) {
         this._startRvfc();

@@ -361,7 +361,7 @@ fn spawn_ffmpeg(ffmpeg_path: &Path, rtsp_url: &str) -> Result<Child> {
             "-movflags",
             "frag_keyframe+empty_moov+default_base_moof+omit_tfhd_offset",
             "-frag_duration",
-            "500000",
+            "250000",
             "-flush_packets",
             "1",
             "-",

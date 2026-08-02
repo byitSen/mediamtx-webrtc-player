@@ -233,49 +233,23 @@ main {
   color: #9ca3af;
 }
 
-/* 应用内全屏：铺满顶栏以下区域，顶栏按钮保持可点 */
+/* 应用内全屏（对齐 Electron）：铺满当前窗口，随窗口缩放；滚轮/拖拽缩放平移 */
 .player-card.fullscreen-mode {
-  position: fixed !important;
-  top: var(--app-top-bar-height, 52px) !important;
-  left: 0 !important;
-  right: 0 !important;
-  bottom: 0 !important;
-  width: auto !important;
-  height: auto !important;
-  max-width: none !important;
-  max-height: none !important;
-  margin: 0 !important;
-  z-index: 20000;
+  position: fixed;
+  inset: 0;
+  margin: 0;
+  z-index: 10000;
   border-radius: 0;
-  border: none;
   display: flex;
   flex-direction: column;
   background: #020617;
-}
-
-body.app-player-fullscreen .top-bar {
-  visibility: visible;
-  pointer-events: auto;
-  z-index: 21000;
-}
-
-body.app-player-fullscreen > footer.footer,
-body.app-player-fullscreen .status-panel {
-  visibility: hidden;
-  pointer-events: none;
-}
-
-.player-card.fullscreen-mode .player-header,
-.player-card.fullscreen-mode .player-footer {
-  flex: 0 0 auto;
 }
 
 .player-card.fullscreen-mode .video-wrapper {
   flex: 1 1 0;
   min-height: 0;
   width: 100%;
-  height: auto;
-  aspect-ratio: auto !important;
+  aspect-ratio: auto;
   position: relative;
   overflow: hidden;
   display: flex;
@@ -313,7 +287,7 @@ body.app-player-fullscreen .status-panel {
   letter-spacing: 0.02em;
 }
 
-/* 设置面板：需高于全屏卡片（20000）与顶栏（21000） */
+/* 设置面板：高于全屏卡片（10000） */
 .modal-overlay {
   position: fixed;
   inset: 0;

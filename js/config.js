@@ -7,6 +7,8 @@ function getDefaultSettings() {
     cameras: [{ name: "摄像头1", rtspUrl: "rtsp://127.0.0.1:554/stream1" }],
     windowWidth: 1020,
     windowHeight: 820,
+    fullscreenWidth: 1240,
+    fullscreenHeight: 800,
     screenshotShortcut: "CommandOrControl+Shift+S",
     memoryWatchEnabled: false,
     memoryWatchProcessName: "weight.exe",
@@ -40,8 +42,6 @@ export function loadSettings() {
     if (merged.maxActiveConnections > 16) merged.maxActiveConnections = 16;
     delete merged.lockFpsEnabled;
     delete merged.lockFps;
-    delete merged.fullscreenWidth;
-    delete merged.fullscreenHeight;
     // 旧默认链迁移到新默认：weight.exe+0x9B8568 → … → 0x5EC（32 位）
     const oldDefaultOffsets = ["0x5EC", "0x310", "0x504", "0x94", "0x4DC"];
     const offsetsEqual =

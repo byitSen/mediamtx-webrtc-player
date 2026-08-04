@@ -1,7 +1,7 @@
 [package]
 name = "monitor-player"
-version = "3.0.14"
-description = "monitor-player — local FFmpeg RTSP via Tauri"
+version = "4.0.0"
+description = "monitor-player — go2rtc RTSP via WebRTC (Tauri)"
 authors = ["monitor-player"]
 edition = "2021"
 
@@ -20,12 +20,11 @@ tauri-plugin-global-shortcut = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tokio = { version = "1", features = ["full"] }
-tokio-tungstenite = "0.26"
-futures-util = "0.3"
 anyhow = "1"
 base64 = "0.22"
 parking_lot = "0.12"
 thiserror = "2"
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [

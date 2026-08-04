@@ -1,5 +1,5 @@
 import { formatTimestamp, saveImageToPath } from "./utils.js";
-import { RtspMsePlayer, pickMseCodec } from "./rtsp-mse-player.js";
+import { WhepPlayer } from "./whep-player.js";
 
 function isDesktop() {
   return typeof window !== "undefined" && !!(window.desktopAPI?.isDesktop?.() || window.electronAPI);
@@ -13,8 +13,8 @@ export class Player {
   constructor(containerEl, cameraConfig) {
     this.containerEl = containerEl;
     this.camera = cameraConfig;
-    this.msePlayer = null;
-    this.proxyRtspUrl = null;
+    this.whepPlayer = null;
+    this.streamName = null;
     this.isConnected = false;
     this.reconnectTimer = null;
     this.reconnectAttempts = 0;
@@ -159,17 +159,10 @@ export class Player {
     this.stopStatsTimer();
     await this.closePeer();
 
-    if (!isDesktop() || !window.electronAPI?.createRtspProxy) {
+    if (!isDesktop() || !window.electronAPI?.registerStream) {
       this.setStatus("not_ready", "仅桌面版支持本地 RTSP");
       this.dom.status.title = "请使用 Tauri 桌面版播放 RTSP";
       this.dom.statsText.textContent = "请使用桌面版";
-      return;
-    }
-
-    const mime = pickMseCodec();
-    if (!mime) {
-      this.setStatus("not_ready", "不支持 MSE 解码");
-      this.dom.status.title = "H.265 可能需安装系统 HEVC 扩展";
       return;
     }
 
@@ -183,14 +176,19 @@ export class Player {
     this.isConnected = false;
 
     try {
-      const res = await window.electronAPI.createRtspProxy(rtspUrl);
-      if (!res?.success || !res.data) {
-        throw new Error(res?.message || "创建 RTSP 代理失败");
+      const ensured = await window.electronAPI.ensureGo2rtc?.();
+      if (ensured && ensured.success === false) {
+        throw new Error(ensured.message || "go2rtc 未就绪");
       }
-      this.proxyRtspUrl = rtspUrl;
-      const wsUrl = res.data;
 
-      this.msePlayer = new RtspMsePlayer(this.dom.video, {
+      const reg = await window.electronAPI.registerStream(rtspUrl);
+      if (!reg?.success || !reg.data?.whepUrl) {
+        throw new Error(reg?.message || "注册 go2rtc 流失败");
+      }
+      this.streamName = reg.data.name || null;
+      const whepUrl = reg.data.whepUrl;
+
+      this.whepPlayer = new WhepPlayer(this.dom.video, {
         onStatus: (s) => {
           if (s === "online") {
             this.isConnected = true;
@@ -217,10 +215,10 @@ export class Player {
         },
       });
 
-      await this.msePlayer.play(wsUrl, mime);
+      await this.whepPlayer.play(whepUrl);
     } catch (err) {
       const msg = err?.message || String(err);
-      console.error(`[${this.camera.name || rtspUrl}] RTSP 错误:`, msg);
+      console.error(`[${this.camera.name || rtspUrl}] WebRTC 错误:`, msg);
       this.setStatus("offline", msg);
       this.reconnectAttempts += 1;
       const delay = Math.min(3000 + this.reconnectAttempts * 2000, 20000);
@@ -369,17 +367,17 @@ export class Player {
   }
 
   async closePeer() {
-    if (this.msePlayer) {
+    if (this.whepPlayer) {
       try {
-        this.msePlayer.destroy();
+        this.whepPlayer.destroy();
       } catch (_) {}
-      this.msePlayer = null;
+      this.whepPlayer = null;
     }
-    if (this.proxyRtspUrl && window.electronAPI?.destroyRtspProxy) {
+    if (this.streamName && window.electronAPI?.unregisterStream) {
       try {
-        await window.electronAPI.destroyRtspProxy(this.proxyRtspUrl);
+        await window.electronAPI.unregisterStream(this.streamName);
       } catch (_) {}
-      this.proxyRtspUrl = null;
+      this.streamName = null;
     }
     this.isConnected = false;
   }

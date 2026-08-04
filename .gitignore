@@ -8,6 +8,8 @@ release/
 # FFmpeg binaries
 resources/ffmpeg/
 src-tauri/resources/ffmpeg/
+resources/go2rtc/
+src-tauri/resources/go2rtc/
 
 # Tauri / Rust
 src-tauri/target/

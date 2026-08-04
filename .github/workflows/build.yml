@@ -32,8 +32,8 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Download FFmpeg
-        run: npm run download-ffmpeg
+      - name: Download go2rtc
+        run: npm run download-go2rtc
 
       - name: Build Tauri
         run: npm run tauri build

@@ -29,7 +29,7 @@
 
     <main>
       <section class="status-panel">
-        <span id="saveDirDisplay" class="save-dir-display">桌面版：本地 FFmpeg 拉 RTSP；截图可指定保存目录。浏览器打开时无法拉流。</span>
+        <span id="saveDirDisplay" class="save-dir-display">桌面版：本地 go2rtc 拉 RTSP + WebRTC 播放；截图可指定保存目录。浏览器打开时无法拉流。</span>
       </section>
 
       <section id="playersGrid" class="grid" aria-label="摄像头播放器网格"></section>
@@ -54,7 +54,7 @@
 
             <label>最大同时连接数</label>
             <input type="number" id="settingMaxActive" min="1" max="16" step="1" value="8" />
-            <span class="hint">限制同时活跃的 FFmpeg 代理路数，默认 8，上限 16。</span>
+            <span class="hint">限制同时活跃的 WebRTC 播放路数，默认 8，上限 16。</span>
 
             <label>摄像头列表（名称 / RTSP 地址）</label>
             <div id="settingCamerasList" class="cameras-list"></div>

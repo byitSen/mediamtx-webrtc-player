@@ -1,16 +1,16 @@
 {
   "name": "monitor-player",
-  "version": "3.0.14",
+  "version": "4.0.0",
   "private": true,
   "type": "module",
   "scripts": {
     "dev": "vite",
     "build": "vite build",
     "preview": "vite preview",
-    "download-ffmpeg": "node scripts/download-ffmpeg.js",
+    "download-go2rtc": "node scripts/download-go2rtc.js",
     "tauri": "tauri",
-    "tauri:dev": "npm run download-ffmpeg && tauri dev",
-    "tauri:build": "npm run download-ffmpeg && tauri build"
+    "tauri:dev": "npm run download-go2rtc && tauri dev",
+    "tauri:build": "npm run download-go2rtc && tauri build"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.4",

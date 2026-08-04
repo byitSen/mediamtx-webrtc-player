@@ -1,8 +1,8 @@
+mod go2rtc;
 mod memory_watch;
-mod rtsp_proxy;
 
+use go2rtc::{stream_name_for_rtsp, Go2rtcManager};
 use memory_watch::{update_memory_watch, MemoryWatchConfig, MemoryWatchState};
-use rtsp_proxy::RtspProxyManager;
 use std::fs;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -11,29 +11,50 @@ use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_global_shortcut::{GlobalShortcutExt, Shortcut, ShortcutState};
 
 struct AppState {
-    proxy: Arc<RtspProxyManager>,
+    go2rtc: Arc<Go2rtcManager>,
     memory: MemoryWatchState,
 }
 
 #[tauri::command]
-async fn start_rtsp_proxy(state: State<'_, AppState>, rtsp_url: String) -> Result<String, String> {
+async fn ensure_go2rtc(state: State<'_, AppState>) -> Result<String, String> {
+    state.go2rtc.ensure_running().await.map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn get_go2rtc_base(state: State<'_, AppState>) -> String {
+    state.go2rtc.base_url().to_string()
+}
+
+#[tauri::command]
+async fn register_stream(
+    state: State<'_, AppState>,
+    name: String,
+    rtsp_url: String,
+) -> Result<serde_json::Value, String> {
+    let stream_name = if name.trim().is_empty() {
+        stream_name_for_rtsp(&rtsp_url)
+    } else {
+        name.trim().to_string()
+    };
     state
-        .proxy
-        .start_proxy(rtsp_url)
+        .go2rtc
+        .register_stream(&stream_name, &rtsp_url)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(serde_json::json!({
+        "name": stream_name,
+        "base": state.go2rtc.base_url(),
+        "whepUrl": format!("{}/api/webrtc?src={}", state.go2rtc.base_url(), stream_name),
+    }))
+}
+
+#[tauri::command]
+async fn unregister_stream(state: State<'_, AppState>, name: String) -> Result<(), String> {
+    state
+        .go2rtc
+        .unregister_stream(&name)
         .await
         .map_err(|e| e.to_string())
-}
-
-#[tauri::command]
-fn stop_rtsp_proxy(state: State<'_, AppState>, rtsp_url: String) -> Result<(), String> {
-    state.proxy.stop_proxy(&rtsp_url);
-    Ok(())
-}
-
-#[tauri::command]
-fn stop_all_rtsp_proxies(state: State<'_, AppState>) -> Result<(), String> {
-    state.proxy.stop_all();
-    Ok(())
 }
 
 #[tauri::command]
@@ -78,7 +99,6 @@ async fn choose_save_dir(app: AppHandle) -> Result<Option<String>, String> {
 }
 
 fn clear_window_chrome_state(win: &tauri::WebviewWindow) {
-    // macOS 系统全屏 / Windows 最大化时 set_size 会被忽略或破坏还原尺寸
     let _ = win.set_fullscreen(false);
     let _ = win.unmaximize();
 }
@@ -137,7 +157,6 @@ fn set_window_fullscreen(app: AppHandle, fullscreen: bool) -> Result<(), String>
 #[tauri::command]
 fn get_window_size(app: AppHandle) -> Result<Option<serde_json::Value>, String> {
     if let Some(win) = app.get_webview_window("main") {
-        // inner_size 与 set_size 一致（逻辑客户区），避免 outer 含标题栏导致越放越大
         let size = win.inner_size().map_err(|e| e.to_string())?;
         let scale = win.scale_factor().unwrap_or(1.0);
         let pos = win.outer_position().ok();
@@ -154,7 +173,6 @@ fn get_window_size(app: AppHandle) -> Result<Option<serde_json::Value>, String> 
     Ok(None)
 }
 
-/// 当前窗口所在显示器的逻辑分辨率（用于单画面全屏铺满屏幕）
 #[tauri::command]
 fn get_screen_size(app: AppHandle) -> Result<Option<serde_json::Value>, String> {
     if let Some(win) = app.get_webview_window("main") {
@@ -202,7 +220,6 @@ fn unmaximize_window(app: AppHandle) -> Result<(), String> {
     Ok(())
 }
 
-/// 恢复窗口几何（先退出系统全屏/最大化，再设位置与尺寸）
 #[tauri::command]
 fn restore_window_geometry(
     app: AppHandle,
@@ -232,12 +249,10 @@ fn restore_window_geometry(
 
 #[tauri::command]
 fn register_screenshot_shortcut(app: AppHandle, accelerator: Option<String>) -> Result<(), String> {
-    // unregister previous by clearing all app shortcuts we manage — plugin API per-shortcut
     let _ = app.global_shortcut().unregister_all();
     let Some(acc) = accelerator.map(|s| s.trim().to_string()).filter(|s| !s.is_empty()) else {
         return Ok(());
     };
-    // Normalize Electron-style to something parseable: CommandOrControl -> CmdOrCtrl
     let normalized = acc
         .replace("CommandOrControl", "CmdOrCtrl")
         .replace("Control", "Ctrl")
@@ -272,22 +287,32 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_global_shortcut::Builder::new().build())
         .setup(|app| {
-            let proxy = Arc::new(RtspProxyManager::new(app.handle().clone()));
+            let go2rtc = Arc::new(Go2rtcManager::new(app.handle().clone()));
             let memory = MemoryWatchState::new();
-            app.manage(AppState { proxy, memory });
+            app.manage(AppState {
+                go2rtc: go2rtc.clone(),
+                memory,
+            });
+            let go2rtc_boot = go2rtc.clone();
+            tauri::async_runtime::spawn(async move {
+                if let Err(e) = go2rtc_boot.ensure_running().await {
+                    eprintln!("[go2rtc] boot: {:#}", e);
+                }
+            });
             Ok(())
         })
         .on_window_event(|window, event| {
             if let tauri::WindowEvent::CloseRequested { .. } = event {
                 if let Some(state) = window.try_state::<AppState>() {
-                    state.proxy.stop_all();
+                    state.go2rtc.stop();
                 }
             }
         })
         .invoke_handler(tauri::generate_handler![
-            start_rtsp_proxy,
-            stop_rtsp_proxy,
-            stop_all_rtsp_proxies,
+            ensure_go2rtc,
+            get_go2rtc_base,
+            register_stream,
+            unregister_stream,
             get_app_version,
             get_platform,
             save_screenshot,

@@ -20,27 +20,32 @@ async function safeInvoke(cmd, args) {
 export const desktopAPI = {
   isDesktop: isDesktopEnv,
 
-  createRtspProxy: async (rtspUrl) => {
+  ensureGo2rtc: async () => {
     try {
-      const wsUrl = await safeInvoke("start_rtsp_proxy", { rtspUrl });
-      return { success: true, data: wsUrl };
+      const base = await safeInvoke("ensure_go2rtc");
+      return { success: true, data: base };
     } catch (e) {
       return { success: false, message: e?.message || String(e) };
     }
   },
 
-  destroyRtspProxy: async (rtspUrl) => {
+  getGo2rtcBase: () => safeInvoke("get_go2rtc_base"),
+
+  registerStream: async (rtspUrl, name = "") => {
     try {
-      await safeInvoke("stop_rtsp_proxy", { rtspUrl });
-      return { success: true };
+      const data = await safeInvoke("register_stream", {
+        name: name || "",
+        rtspUrl,
+      });
+      return { success: true, data };
     } catch (e) {
       return { success: false, message: e?.message || String(e) };
     }
   },
 
-  destroyAllRtspProxies: async () => {
+  unregisterStream: async (name) => {
     try {
-      await safeInvoke("stop_all_rtsp_proxies");
+      await safeInvoke("unregister_stream", { name });
       return { success: true };
     } catch (e) {
       return { success: false, message: e?.message || String(e) };
@@ -108,12 +113,12 @@ export const desktopAPI = {
   },
 };
 
-// 兼容旧代码：挂到 window.electronAPI 同名能力
 export function installDesktopGlobals() {
   const api = {
-    createRtspProxy: desktopAPI.createRtspProxy,
-    destroyRtspProxy: desktopAPI.destroyRtspProxy,
-    destroyAllRtspProxies: desktopAPI.destroyAllRtspProxies,
+    ensureGo2rtc: desktopAPI.ensureGo2rtc,
+    getGo2rtcBase: desktopAPI.getGo2rtcBase,
+    registerStream: desktopAPI.registerStream,
+    unregisterStream: desktopAPI.unregisterStream,
     getAppVersion: desktopAPI.getAppVersion,
     chooseSaveDir: desktopAPI.chooseSaveDir,
     saveScreenshot: desktopAPI.saveScreenshot,
@@ -130,8 +135,11 @@ export function installDesktopGlobals() {
     registerScreenshotShortcut: desktopAPI.registerScreenshotShortcut,
     configureMemoryWatch: desktopAPI.configureMemoryWatch,
     get platform() {
-      // sync fallback; prefer async getPlatform where possible
-      return navigator.platform?.toLowerCase().includes("win") ? "win32" : navigator.platform?.toLowerCase().includes("mac") ? "darwin" : "linux";
+      return navigator.platform?.toLowerCase().includes("win")
+        ? "win32"
+        : navigator.platform?.toLowerCase().includes("mac")
+          ? "darwin"
+          : "linux";
     },
   };
   if (typeof window !== "undefined") {

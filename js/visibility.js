@@ -15,7 +15,7 @@ const observer = new IntersectionObserver(
           player.setStatus("not_ready", "连接池已满，暂不拉流");
         }
       } else {
-        // 滚出视口，释放连接并归还配额（关闭 WebRTC / 注销 go2rtc 流）
+        // 滚出视口，释放连接并归还配额（关闭 MSE / 注销 go2rtc 流）
         deactivate(player);
         Promise.resolve(player.closePeer()).catch(() => {});
       }

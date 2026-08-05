@@ -29,7 +29,7 @@
 
     <main>
       <section class="status-panel">
-        <span id="saveDirDisplay" class="save-dir-display">桌面版：本地 go2rtc 拉 RTSP + WebRTC 播放；截图可指定保存目录。浏览器打开时无法拉流。</span>
+        <span id="saveDirDisplay" class="save-dir-display">桌面版：本地 go2rtc 拉 RTSP + MSE video 播放；截图可指定保存目录。浏览器打开时无法拉流。</span>
       </section>
 
       <section id="playersGrid" class="grid" aria-label="摄像头播放器网格"></section>
@@ -63,12 +63,12 @@
             </select>
             <span class="hint" id="settingStreamSourceHint">RTSP：填写摄像头地址，应用自动注册。go2rtc：填写 WebUI 中已配置的流名，不重复注册。</span>
 
-            <label>视频编码（WebRTC）</label>
+            <label>视频编码（MSE）</label>
             <select id="settingPreferredVideoCodec">
               <option value="h265" selected>H.265（默认）</option>
               <option value="h264">H.264</option>
             </select>
-            <span class="hint">尽量按所选编码协商；WebView 不支持 H.265 WebRTC 时可改 H.264。Windows 需系统 HEVC 扩展。</span>
+            <span class="hint">按所选编码与 go2rtc 协商；摄像头不匹配时可切换。Windows 播 H.265 需系统 HEVC 扩展。</span>
 
             <label>RTSP 拉流传输</label>
             <select id="settingRtspTransport">

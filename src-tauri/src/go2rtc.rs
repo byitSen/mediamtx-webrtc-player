@@ -1,4 +1,4 @@
-//! 本机托管 go2rtc：拉 RTSP，向前端提供 MSE（WebSocket fMP4）
+//! 本机托管 go2rtc：拉 RTSP，向前端提供 WebSocket 信令（WebRTC / MSE）
 use anyhow::{anyhow, Context, Result};
 use parking_lot::Mutex;
 use std::collections::hash_map::DefaultHasher;

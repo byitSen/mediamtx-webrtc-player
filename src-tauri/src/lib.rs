@@ -54,6 +54,8 @@ async fn register_stream(
     Ok(serde_json::json!({
         "name": stream_name,
         "base": base,
+        "wsUrl": format!("{ws_base}/api/ws?src={stream_name}"),
+        // 兼容旧字段名
         "mseUrl": format!("{ws_base}/api/ws?src={stream_name}"),
     }))
 }

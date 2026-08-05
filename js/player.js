@@ -1,5 +1,5 @@
 import { formatTimestamp, saveImageToPath } from "./utils.js";
-import { Go2rtcMsePlayer } from "./go2rtc-mse-player.js";
+import { Go2rtcWebrtcPlayer } from "./go2rtc-webrtc-player.js";
 import { getEffectiveSettings } from "./config.js";
 
 function isDesktop() {
@@ -14,7 +14,7 @@ export class Player {
   constructor(containerEl, cameraConfig) {
     this.containerEl = containerEl;
     this.camera = cameraConfig;
-    this.msePlayer = null;
+    this.rtcPlayer = null;
     this.streamName = null;
     /** 是否由本应用 register_stream 注册（go2rtc 自定义流不注销） */
     this._ownedStream = false;
@@ -195,7 +195,7 @@ export class Player {
         throw new Error(ensured.message || "go2rtc 未就绪");
       }
 
-      let mseUrl = "";
+      let wsUrl = "";
       if (streamSource === "go2rtc") {
         const base =
           (typeof ensured?.data === "string" && ensured.data) ||
@@ -203,7 +203,7 @@ export class Player {
           "http://127.0.0.1:1984";
         const wsBase = base.replace(/^http/i, "ws");
         const src = encodeURIComponent(go2rtcSrc);
-        mseUrl = `${wsBase}/api/ws?src=${src}`;
+        wsUrl = `${wsBase}/api/ws?src=${src}`;
         this.streamName = go2rtcSrc;
         this._ownedStream = false;
       } else {
@@ -211,15 +211,15 @@ export class Player {
           throw new Error("桌面 API 不支持注册流");
         }
         const reg = await window.electronAPI.registerStream(rtspUrl, "", rtspTransport);
-        if (!reg?.success || !reg.data?.mseUrl) {
+        if (!reg?.success || !(reg.data?.wsUrl || reg.data?.mseUrl)) {
           throw new Error(reg?.message || "注册 go2rtc 流失败");
         }
         this.streamName = reg.data.name || null;
         this._ownedStream = true;
-        mseUrl = reg.data.mseUrl;
+        wsUrl = reg.data.wsUrl || reg.data.mseUrl;
       }
 
-      this.msePlayer = new Go2rtcMsePlayer(this.dom.video, {
+      this.rtcPlayer = new Go2rtcWebrtcPlayer(this.dom.video, {
         onStatus: (s) => {
           if (s === "online") {
             this.isConnected = true;
@@ -243,17 +243,16 @@ export class Player {
         },
         onStats: ({ fps, dropped }) => {
           const fpsText = fps != null ? fps.toFixed(1) : "-";
-          // dropped = 近 1 秒丢帧数（非累计）
           this.dom.statsText.textContent =
             dropped > 0 ? `FPS: ${fpsText} (丢 ${dropped}/s)` : `FPS: ${fpsText}`;
         },
       });
 
-      await this.msePlayer.play(mseUrl, { preferredVideoCodec });
+      await this.rtcPlayer.play(wsUrl, { preferredVideoCodec, media: "video" });
     } catch (err) {
       const label = streamSource === "go2rtc" ? go2rtcSrc : rtspUrl;
       const msg = err?.message || String(err);
-      console.error(`[${this.camera.name || label}] MSE 错误:`, msg);
+      console.error(`[${this.camera.name || label}] WebRTC 错误:`, msg);
       this.setStatus("offline", msg);
       this.reconnectAttempts += 1;
       const delay = Math.min(3000 + this.reconnectAttempts * 2000, 20000);
@@ -402,11 +401,11 @@ export class Player {
   }
 
   async closePeer() {
-    if (this.msePlayer) {
+    if (this.rtcPlayer) {
       try {
-        this.msePlayer.destroy();
+        this.rtcPlayer.destroy();
       } catch (_) {}
-      this.msePlayer = null;
+      this.rtcPlayer = null;
     }
     if (this._ownedStream && this.streamName && window.electronAPI?.unregisterStream) {
       try {

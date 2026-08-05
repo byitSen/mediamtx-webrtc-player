@@ -31,11 +31,12 @@ export const desktopAPI = {
 
   getGo2rtcBase: () => safeInvoke("get_go2rtc_base"),
 
-  registerStream: async (rtspUrl, name = "") => {
+  registerStream: async (rtspUrl, name = "", transport = "") => {
     try {
       const data = await safeInvoke("register_stream", {
         name: name || "",
         rtspUrl,
+        transport: transport || "",
       });
       return { success: true, data };
     } catch (e) {
@@ -46,6 +47,15 @@ export const desktopAPI = {
   unregisterStream: async (name) => {
     try {
       await safeInvoke("unregister_stream", { name });
+      return { success: true };
+    } catch (e) {
+      return { success: false, message: e?.message || String(e) };
+    }
+  },
+
+  openExternalUrl: async (url) => {
+    try {
+      await safeInvoke("open_external_url", { url });
       return { success: true };
     } catch (e) {
       return { success: false, message: e?.message || String(e) };
@@ -119,6 +129,7 @@ export function installDesktopGlobals() {
     getGo2rtcBase: desktopAPI.getGo2rtcBase,
     registerStream: desktopAPI.registerStream,
     unregisterStream: desktopAPI.unregisterStream,
+    openExternalUrl: desktopAPI.openExternalUrl,
     getAppVersion: desktopAPI.getAppVersion,
     chooseSaveDir: desktopAPI.chooseSaveDir,
     saveScreenshot: desktopAPI.saveScreenshot,

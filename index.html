@@ -29,7 +29,7 @@
 
     <main>
       <section class="status-panel">
-        <span id="saveDirDisplay" class="save-dir-display">桌面版：本地 go2rtc 拉 RTSP + WebRTC 播放；截图可指定保存目录。浏览器打开时无法拉流。</span>
+        <span id="saveDirDisplay" class="save-dir-display">桌面版：本地 go2rtc 拉 RTSP + MSE video 播放；截图可指定保存目录。浏览器打开时无法拉流。</span>
       </section>
 
       <section id="playersGrid" class="grid" aria-label="摄像头播放器网格"></section>
@@ -54,11 +54,32 @@
 
             <label>最大同时连接数</label>
             <input type="number" id="settingMaxActive" min="1" max="16" step="1" value="8" />
-            <span class="hint">限制同时活跃的 WebRTC 播放路数，默认 8，上限 16。</span>
+            <span class="hint">限制同时活跃的播放路数，默认 8，上限 16。</span>
+
+            <label>视频编码（MSE）</label>
+            <select id="settingPreferredVideoCodec">
+              <option value="h265" selected>H.265（默认）</option>
+              <option value="h264">H.264</option>
+            </select>
+            <span class="hint">按所选编码与 go2rtc 协商；摄像头不匹配时可切换。Windows 播 H.265 需系统 HEVC 扩展。</span>
+
+            <label>RTSP 拉流传输</label>
+            <select id="settingRtspTransport">
+              <option value="udp" selected>UDP（默认，局域网低延迟）</option>
+              <option value="tcp">TCP（更稳，穿透/丢包严重时用）</option>
+            </select>
+            <span class="hint">写入 go2rtc 源地址 #transport=…；地址里已写 transport 则不覆盖。</span>
 
             <label>摄像头列表（名称 / RTSP 地址）</label>
             <div id="settingCamerasList" class="cameras-list"></div>
             <button type="button" id="settingAddCamera" class="btn secondary btn-sm">添加一路</button>
+          </fieldset>
+
+          <fieldset class="settings-section" id="settingGo2rtcSection">
+            <legend>go2rtc（桌面版）</legend>
+            <p class="hint" id="settingGo2rtcUrlHint">本机 WebUI：http://127.0.0.1:1984</p>
+            <button type="button" id="openGo2rtcWebBtn" class="btn secondary">打开 go2rtc Web</button>
+            <span class="hint">用于查看流状态、调试链路。</span>
           </fieldset>
 
           <fieldset class="settings-section" id="settingWindowSizeSection">

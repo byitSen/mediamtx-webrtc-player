@@ -30,21 +30,31 @@ async fn register_stream(
     state: State<'_, AppState>,
     name: String,
     rtsp_url: String,
+    transport: Option<String>,
 ) -> Result<serde_json::Value, String> {
     let stream_name = if name.trim().is_empty() {
         stream_name_for_rtsp(&rtsp_url)
     } else {
         name.trim().to_string()
     };
+    let transport = transport.unwrap_or_default();
     state
         .go2rtc
-        .register_stream(&stream_name, &rtsp_url)
+        .register_stream(&stream_name, &rtsp_url, &transport)
         .await
         .map_err(|e| e.to_string())?;
+    let base = state.go2rtc.base_url();
+    let ws_base = if let Some(rest) = base.strip_prefix("https://") {
+        format!("wss://{rest}")
+    } else if let Some(rest) = base.strip_prefix("http://") {
+        format!("ws://{rest}")
+    } else {
+        base.to_string()
+    };
     Ok(serde_json::json!({
         "name": stream_name,
-        "base": state.go2rtc.base_url(),
-        "whepUrl": format!("{}/api/webrtc?src={}", state.go2rtc.base_url(), stream_name),
+        "base": base,
+        "mseUrl": format!("{ws_base}/api/ws?src={stream_name}"),
     }))
 }
 
@@ -55,6 +65,39 @@ async fn unregister_stream(state: State<'_, AppState>, name: String) -> Result<(
         .unregister_stream(&name)
         .await
         .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    let url = url.trim();
+    if url.is_empty() {
+        return Err("url 为空".into());
+    }
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err("仅允许 http/https".into());
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(["/C", "start", "", url])
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(url)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    #[cfg(all(unix, not(target_os = "macos")))]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(url)
+            .spawn()
+            .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 #[tauri::command]
@@ -313,6 +356,7 @@ pub fn run() {
             get_go2rtc_base,
             register_stream,
             unregister_stream,
+            open_external_url,
             get_app_version,
             get_platform,
             save_screenshot,

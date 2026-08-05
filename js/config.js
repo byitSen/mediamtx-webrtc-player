@@ -15,6 +15,10 @@ function getDefaultSettings() {
     memoryWatchOffsets: ["0x504", "0x434", "0x4", "0x310", "0x5EC"],
     memoryWatchPointerSize: 4,
     memoryWatchTriggerValue: 0,
+    // MSE 协商优先编码：h265 | h264
+    preferredVideoCodec: "h265",
+    // RTSP 拉流传输：udp | tcp
+    rtspTransport: "udp",
   };
 }
 
@@ -60,6 +64,10 @@ export function loadSettings() {
     if (merged.memoryWatchTriggerValue === undefined || merged.memoryWatchTriggerValue === null) {
       merged.memoryWatchTriggerValue = 0;
     }
+    const codec = String(merged.preferredVideoCodec || "h265").toLowerCase();
+    merged.preferredVideoCodec = codec === "h264" ? "h264" : "h265";
+    const transport = String(merged.rtspTransport || "udp").toLowerCase();
+    merged.rtspTransport = transport === "tcp" ? "tcp" : "udp";
     return merged;
   } catch (e) {
     console.warn("loadSettings error", e);

@@ -48,9 +48,13 @@ const settingsCancelBtn = document.getElementById("settingsCancelBtn");
 const settingsSaveBtn = document.getElementById("settingsSaveBtn");
 const settingGridColumns = document.getElementById("settingGridColumns");
 const settingMaxActive = document.getElementById("settingMaxActive");
+const settingPreferredVideoCodec = document.getElementById("settingPreferredVideoCodec");
+const settingRtspTransport = document.getElementById("settingRtspTransport");
 const settingCamerasList = document.getElementById("settingCamerasList");
 const settingAddCamera = document.getElementById("settingAddCamera");
 const settingsBtn = document.getElementById("settingsBtn");
+const openGo2rtcWebBtn = document.getElementById("openGo2rtcWebBtn");
+const settingGo2rtcSection = document.getElementById("settingGo2rtcSection");
 
 const settingWindowSizeSection = document.getElementById("settingWindowSizeSection");
 const settingWindowPreset = document.getElementById("settingWindowPreset");
@@ -213,6 +217,12 @@ function openSettings() {
 
   if (settingGridColumns) settingGridColumns.value = String(gridColumns);
   if (settingMaxActive) settingMaxActive.value = String(maxActive);
+  if (settingPreferredVideoCodec) {
+    settingPreferredVideoCodec.value = cfg.preferredVideoCodec === "h264" ? "h264" : "h265";
+  }
+  if (settingRtspTransport) {
+    settingRtspTransport.value = cfg.rtspTransport === "tcp" ? "tcp" : "udp";
+  }
 
   if (settingCamerasList) {
     settingCamerasList.innerHTML = "";
@@ -258,6 +268,9 @@ function openSettings() {
 
   if (settingWindowSizeSection) {
     settingWindowSizeSection.style.display = isElectronEnv() ? "" : "none";
+  }
+  if (settingGo2rtcSection) {
+    settingGo2rtcSection.style.display = isElectronEnv() ? "" : "none";
   }
   updateMemoryWatchSectionAvailability();
 
@@ -311,6 +324,8 @@ function saveSettingsFromForm() {
   const current = loadSettings();
   const gridColumns = Math.max(1, Math.min(4, parseInt(settingGridColumns?.value || "2", 10) || 2));
   const maxActive = Math.max(1, Math.min(16, parseInt(settingMaxActive?.value || "8", 10) || 8));
+  const preferredVideoCodec = settingPreferredVideoCodec?.value === "h264" ? "h264" : "h265";
+  const rtspTransport = settingRtspTransport?.value === "tcp" ? "tcp" : "udp";
   const windowWidth = Math.max(WINDOW_WIDTH_MIN, Math.min(WINDOW_WIDTH_MAX, parseInt(settingWindowWidth?.value || "1020", 10) || 1020));
   const windowHeight = Math.max(WINDOW_HEIGHT_MIN, Math.min(WINDOW_HEIGHT_MAX, parseInt(settingWindowHeight?.value || "820", 10) || 820));
   const screenshotShortcut = (settingScreenshotShortcut?.value || "").trim();
@@ -331,6 +346,8 @@ function saveSettingsFromForm() {
     cameras,
     gridColumns,
     maxActiveConnections: maxActive,
+    preferredVideoCodec,
+    rtspTransport,
     windowWidth,
     windowHeight,
     screenshotShortcut: screenshotShortcut || undefined,
@@ -561,6 +578,33 @@ async function showAppVersion() {
   el.title = `版本 ${version}`;
 }
 
+async function openGo2rtcWeb() {
+  if (!isElectronEnv() || !window.electronAPI?.ensureGo2rtc) {
+    showToast("仅桌面版可用");
+    return;
+  }
+  try {
+    const res = await window.electronAPI.ensureGo2rtc();
+    if (res && res.success === false) {
+      showToast(res.message || "go2rtc 未就绪");
+      return;
+    }
+    const base =
+      (typeof res?.data === "string" && res.data) ||
+      (await window.electronAPI.getGo2rtcBase?.()) ||
+      "http://127.0.0.1:1984";
+    if (window.electronAPI.openExternalUrl) {
+      const opened = await window.electronAPI.openExternalUrl(base);
+      if (opened && opened.success === false) throw new Error(opened.message || "打开失败");
+    } else {
+      window.open(base, "_blank");
+    }
+  } catch (e) {
+    console.error("打开 go2rtc Web 失败", e);
+    showToast(e?.message || "打开 go2rtc Web 失败");
+  }
+}
+
 async function chooseSaveDir() {
   if (!isElectronEnv()) return;
   try {
@@ -582,6 +626,7 @@ function setupGlobalControls() {
   if (settingsSaveBtn) settingsSaveBtn.addEventListener("click", saveSettingsFromForm);
   if (settingAddCamera) settingAddCamera.addEventListener("click", addCameraRow);
   if (settingAddMemoryOffset) settingAddMemoryOffset.addEventListener("click", addMemoryOffsetRow);
+  if (openGo2rtcWebBtn) openGo2rtcWebBtn.addEventListener("click", openGo2rtcWeb);
 
   const chooseSaveDirBtn = document.getElementById("chooseSaveDirBtn");
   const settingSaveDirPath = document.getElementById("settingSaveDirPath");

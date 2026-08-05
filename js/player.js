@@ -1,5 +1,6 @@
 import { formatTimestamp, saveImageToPath } from "./utils.js";
-import { WhepPlayer } from "./whep-player.js";
+import { Go2rtcMsePlayer } from "./go2rtc-mse-player.js";
+import { getEffectiveSettings } from "./config.js";
 
 function isDesktop() {
   return typeof window !== "undefined" && !!(window.desktopAPI?.isDesktop?.() || window.electronAPI);
@@ -13,7 +14,7 @@ export class Player {
   constructor(containerEl, cameraConfig) {
     this.containerEl = containerEl;
     this.camera = cameraConfig;
-    this.whepPlayer = null;
+    this.msePlayer = null;
     this.streamName = null;
     this.isConnected = false;
     this.reconnectTimer = null;
@@ -181,14 +182,18 @@ export class Player {
         throw new Error(ensured.message || "go2rtc 未就绪");
       }
 
-      const reg = await window.electronAPI.registerStream(rtspUrl);
-      if (!reg?.success || !reg.data?.whepUrl) {
+      const settings = getEffectiveSettings();
+      const preferredVideoCodec = settings.preferredVideoCodec === "h264" ? "h264" : "h265";
+      const rtspTransport = settings.rtspTransport === "tcp" ? "tcp" : "udp";
+
+      const reg = await window.electronAPI.registerStream(rtspUrl, "", rtspTransport);
+      if (!reg?.success || !reg.data?.mseUrl) {
         throw new Error(reg?.message || "注册 go2rtc 流失败");
       }
       this.streamName = reg.data.name || null;
-      const whepUrl = reg.data.whepUrl;
+      const mseUrl = reg.data.mseUrl;
 
-      this.whepPlayer = new WhepPlayer(this.dom.video, {
+      this.msePlayer = new Go2rtcMsePlayer(this.dom.video, {
         onStatus: (s) => {
           if (s === "online") {
             this.isConnected = true;
@@ -210,15 +215,17 @@ export class Player {
           this.setStatus("not_ready", msg || "播放失败");
           this.dom.status.title = msg || "";
         },
-        onStats: ({ fps }) => {
-          this.dom.statsText.textContent = `FPS: ${fps != null ? fps.toFixed(1) : "-"}`;
+        onStats: ({ fps, dropped }) => {
+          const fpsText = fps != null ? fps.toFixed(1) : "-";
+          this.dom.statsText.textContent =
+            dropped > 0 ? `FPS: ${fpsText} (丢 ${dropped})` : `FPS: ${fpsText}`;
         },
       });
 
-      await this.whepPlayer.play(whepUrl);
+      await this.msePlayer.play(mseUrl, { preferredVideoCodec });
     } catch (err) {
       const msg = err?.message || String(err);
-      console.error(`[${this.camera.name || rtspUrl}] WebRTC 错误:`, msg);
+      console.error(`[${this.camera.name || rtspUrl}] MSE 错误:`, msg);
       this.setStatus("offline", msg);
       this.reconnectAttempts += 1;
       const delay = Math.min(3000 + this.reconnectAttempts * 2000, 20000);
@@ -367,11 +374,11 @@ export class Player {
   }
 
   async closePeer() {
-    if (this.whepPlayer) {
+    if (this.msePlayer) {
       try {
-        this.whepPlayer.destroy();
+        this.msePlayer.destroy();
       } catch (_) {}
-      this.whepPlayer = null;
+      this.msePlayer = null;
     }
     if (this.streamName && window.electronAPI?.unregisterStream) {
       try {

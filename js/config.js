@@ -17,8 +17,6 @@ function getDefaultSettings() {
     memoryWatchTriggerValue: 0,
     // MSE 协商优先编码：h265 | h264
     preferredVideoCodec: "h265",
-    // 拉流方式：rtsp=应用自动注册 | go2rtc=使用 Web 里配置的流名
-    streamSource: "rtsp",
   };
 }
 
@@ -27,16 +25,15 @@ function migrateCameras(cameras) {
   return cameras.map((c) => {
     const name = c?.name || "未命名";
     const rtspUrl = (c?.rtspUrl || "").trim();
-    const go2rtcSrc = (c?.go2rtcSrc || "").trim();
-    // 旧版 path 仅作显示后备
     const path = (c?.path || "").trim();
+    const legacySrc = (c?.go2rtcSrc || "").trim();
     const migratedRtsp =
-      rtspUrl || (path.startsWith("rtsp") ? path : "");
+      rtspUrl ||
+      (path.startsWith("rtsp") ? path : "") ||
+      (legacySrc.startsWith("rtsp") ? legacySrc : "");
     return {
       name,
       rtspUrl: migratedRtsp,
-      go2rtcSrc: go2rtcSrc || undefined,
-      path: path && !path.startsWith("rtsp") ? path : undefined,
     };
   });
 }
@@ -74,8 +71,7 @@ export function loadSettings() {
     const codec = String(merged.preferredVideoCodec || "h265").toLowerCase();
     merged.preferredVideoCodec = codec === "h264" ? "h264" : "h265";
     delete merged.rtspTransport;
-    const src = String(merged.streamSource || "rtsp").toLowerCase();
-    merged.streamSource = src === "go2rtc" ? "go2rtc" : "rtsp";
+    delete merged.streamSource;
     return merged;
   } catch (e) {
     console.warn("loadSettings error", e);

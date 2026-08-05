@@ -7,7 +7,7 @@ function isDesktop() {
 }
 
 function cameraId(camera) {
-  return camera?.rtspUrl || camera?.go2rtcSrc || camera?.path || camera?.id || camera?.name || "";
+  return camera?.rtspUrl || camera?.path || camera?.id || camera?.name || "";
 }
 
 export class Player {
@@ -16,7 +16,7 @@ export class Player {
     this.camera = cameraConfig;
     this.msePlayer = null;
     this.streamName = null;
-    /** 是否由本应用 register_stream 注册（go2rtc 自定义流不注销） */
+    /** 是否由本应用 register_stream 注册 */
     this._ownedStream = false;
     this.isConnected = false;
     this.reconnectTimer = null;
@@ -170,18 +170,11 @@ export class Player {
     }
 
     const settings = getEffectiveSettings();
-    const streamSource = settings.streamSource === "go2rtc" ? "go2rtc" : "rtsp";
     const preferredVideoCodec = settings.preferredVideoCodec === "h264" ? "h264" : "h265";
-
     const rtspUrl = (this.camera.rtspUrl || "").trim();
-    const go2rtcSrc = (this.camera.go2rtcSrc || "").trim();
 
-    if (streamSource === "rtsp" && !rtspUrl) {
+    if (!rtspUrl) {
       this.setStatus("not_ready", "未配置 RTSP 地址");
-      return;
-    }
-    if (streamSource === "go2rtc" && !go2rtcSrc) {
-      this.setStatus("not_ready", "未配置 go2rtc 流名");
       return;
     }
 
@@ -194,29 +187,16 @@ export class Player {
         throw new Error(ensured.message || "go2rtc 未就绪");
       }
 
-      let mseUrl = "";
-      if (streamSource === "go2rtc") {
-        const base =
-          (typeof ensured?.data === "string" && ensured.data) ||
-          (await window.electronAPI.getGo2rtcBase?.()) ||
-          "http://127.0.0.1:1984";
-        const wsBase = base.replace(/^http/i, "ws");
-        const src = encodeURIComponent(go2rtcSrc);
-        mseUrl = `${wsBase}/api/ws?src=${src}`;
-        this.streamName = go2rtcSrc;
-        this._ownedStream = false;
-      } else {
-        if (!window.electronAPI.registerStream) {
-          throw new Error("桌面 API 不支持注册流");
-        }
-        const reg = await window.electronAPI.registerStream(rtspUrl, "");
-        if (!reg?.success || !reg.data?.mseUrl) {
-          throw new Error(reg?.message || "注册 go2rtc 流失败");
-        }
-        this.streamName = reg.data.name || null;
-        this._ownedStream = true;
-        mseUrl = reg.data.mseUrl;
+      if (!window.electronAPI.registerStream) {
+        throw new Error("桌面 API 不支持注册流");
       }
+      const reg = await window.electronAPI.registerStream(rtspUrl, "");
+      if (!reg?.success || !reg.data?.mseUrl) {
+        throw new Error(reg?.message || "注册 go2rtc 流失败");
+      }
+      this.streamName = reg.data.name || null;
+      this._ownedStream = true;
+      const mseUrl = reg.data.mseUrl;
 
       this.msePlayer = new Go2rtcMsePlayer(this.dom.video, {
         onStatus: (s) => {
@@ -242,7 +222,6 @@ export class Player {
         },
         onStats: ({ fps, dropped }) => {
           const fpsText = fps != null ? fps.toFixed(1) : "-";
-          // dropped = 近 1 秒丢帧数（非累计）
           this.dom.statsText.textContent =
             dropped > 0 ? `FPS: ${fpsText} (丢 ${dropped}/s)` : `FPS: ${fpsText}`;
         },
@@ -250,9 +229,8 @@ export class Player {
 
       await this.msePlayer.play(mseUrl, { preferredVideoCodec });
     } catch (err) {
-      const label = streamSource === "go2rtc" ? go2rtcSrc : rtspUrl;
       const msg = err?.message || String(err);
-      console.error(`[${this.camera.name || label}] MSE 错误:`, msg);
+      console.error(`[${this.camera.name || rtspUrl}] MSE 错误:`, msg);
       this.setStatus("offline", msg);
       this.reconnectAttempts += 1;
       const delay = Math.min(3000 + this.reconnectAttempts * 2000, 20000);

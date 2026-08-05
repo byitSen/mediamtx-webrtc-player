@@ -56,13 +56,6 @@
             <input type="number" id="settingMaxActive" min="1" max="16" step="1" value="8" />
             <span class="hint">限制同时活跃的播放路数，默认 8，上限 16。</span>
 
-            <label>拉流方式</label>
-            <select id="settingStreamSource">
-              <option value="rtsp" selected>RTSP（应用自动注册到 go2rtc）</option>
-              <option value="go2rtc">go2rtc Web 自定义流</option>
-            </select>
-            <span class="hint" id="settingStreamSourceHint">RTSP：填写摄像头地址，应用自动注册。go2rtc：填写 WebUI 中已配置的流名，不重复注册。</span>
-
             <label>视频编码（MSE）</label>
             <select id="settingPreferredVideoCodec">
               <option value="h265" selected>H.265（默认）</option>
@@ -79,7 +72,7 @@
             <legend>go2rtc（桌面版）</legend>
             <p class="hint" id="settingGo2rtcUrlHint">本机 WebUI：http://127.0.0.1:1984</p>
             <button type="button" id="openGo2rtcWebBtn" class="btn secondary">打开 go2rtc Web</button>
-            <span class="hint">用于查看/编辑流。选「go2rtc Web 自定义流」时，列表填写与 WebUI 一致的流名。</span>
+            <span class="hint">用于查看本机 go2rtc 状态与已注册流。</span>
           </fieldset>
 
           <fieldset class="settings-section" id="settingWindowSizeSection">

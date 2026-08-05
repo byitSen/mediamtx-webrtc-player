@@ -70,13 +70,6 @@
             </select>
             <span class="hint">按所选编码与 go2rtc 协商；摄像头不匹配时可切换。Windows 播 H.265 需系统 HEVC 扩展。</span>
 
-            <label>RTSP 拉流传输</label>
-            <select id="settingRtspTransport">
-              <option value="udp" selected>UDP（默认，局域网低延迟）</option>
-              <option value="tcp">TCP（更稳，穿透/丢包严重时用）</option>
-            </select>
-            <span class="hint" id="settingRtspTransportHint">仅「RTSP」拉流方式生效；写入 #transport=…，地址已写则不覆盖。</span>
-
             <label id="settingCamerasListLabel">摄像头列表（名称 / RTSP 地址）</label>
             <div id="settingCamerasList" class="cameras-list"></div>
             <button type="button" id="settingAddCamera" class="btn secondary btn-sm">添加一路</button>

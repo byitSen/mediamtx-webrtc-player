@@ -138,13 +138,13 @@ rtsp:
         if name.is_empty() || rtsp_url.is_empty() {
             return Err(anyhow!("name / rtspUrl 不能为空"));
         }
-        let transport = if transport.trim().eq_ignore_ascii_case("tcp") {
-            "tcp"
+        let transport = transport.trim().to_lowercase();
+        // 空：不写 #transport，走 go2rtc 默认（TCP）；仅显式 tcp/udp 时写入
+        let src = if transport == "tcp" || transport == "udp" {
+            merge_rtsp_query(rtsp_url, &[("transport", transport.as_str())])
         } else {
-            "udp"
+            rtsp_url.to_string()
         };
-        // 用户 URL 已带 transport= 则不覆盖
-        let src = merge_rtsp_query(rtsp_url, &[("transport", transport)]);
         let client = reqwest::Client::new();
         let url = format!(
             "{}/api/streams?name={}&src={}",

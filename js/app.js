@@ -49,10 +49,8 @@ const settingsSaveBtn = document.getElementById("settingsSaveBtn");
 const settingGridColumns = document.getElementById("settingGridColumns");
 const settingMaxActive = document.getElementById("settingMaxActive");
 const settingPreferredVideoCodec = document.getElementById("settingPreferredVideoCodec");
-const settingRtspTransport = document.getElementById("settingRtspTransport");
 const settingStreamSource = document.getElementById("settingStreamSource");
 const settingCamerasListLabel = document.getElementById("settingCamerasListLabel");
-const settingRtspTransportHint = document.getElementById("settingRtspTransportHint");
 const settingCamerasList = document.getElementById("settingCamerasList");
 const settingAddCamera = document.getElementById("settingAddCamera");
 const settingsBtn = document.getElementById("settingsBtn");
@@ -108,9 +106,6 @@ function updateStreamSourceUi() {
     settingCamerasListLabel.textContent = go2rtc
       ? "摄像头列表（名称 / go2rtc 流名）"
       : "摄像头列表（名称 / RTSP 地址）";
-  }
-  if (settingRtspTransport) {
-    settingRtspTransport.disabled = go2rtc;
   }
   settingCamerasList?.querySelectorAll(".camera-row input.source-input").forEach((input) => {
     input.placeholder = go2rtc ? "camera1（与 go2rtc Web 流名一致）" : "rtsp://127.0.0.1:554/stream1";
@@ -245,9 +240,6 @@ function openSettings() {
   if (settingPreferredVideoCodec) {
     settingPreferredVideoCodec.value = cfg.preferredVideoCodec === "h264" ? "h264" : "h265";
   }
-  if (settingRtspTransport) {
-    settingRtspTransport.value = cfg.rtspTransport === "tcp" ? "tcp" : "udp";
-  }
   if (settingStreamSource) {
     settingStreamSource.value = cfg.streamSource === "go2rtc" ? "go2rtc" : "rtsp";
   }
@@ -381,7 +373,6 @@ function saveSettingsFromForm() {
   const gridColumns = Math.max(1, Math.min(4, parseInt(settingGridColumns?.value || "2", 10) || 2));
   const maxActive = Math.max(1, Math.min(16, parseInt(settingMaxActive?.value || "8", 10) || 8));
   const preferredVideoCodec = settingPreferredVideoCodec?.value === "h264" ? "h264" : "h265";
-  const rtspTransport = settingRtspTransport?.value === "tcp" ? "tcp" : "udp";
   const windowWidth = Math.max(WINDOW_WIDTH_MIN, Math.min(WINDOW_WIDTH_MAX, parseInt(settingWindowWidth?.value || "1020", 10) || 1020));
   const windowHeight = Math.max(WINDOW_HEIGHT_MIN, Math.min(WINDOW_HEIGHT_MAX, parseInt(settingWindowHeight?.value || "820", 10) || 820));
   const screenshotShortcut = (settingScreenshotShortcut?.value || "").trim();
@@ -403,7 +394,6 @@ function saveSettingsFromForm() {
     gridColumns,
     maxActiveConnections: maxActive,
     preferredVideoCodec,
-    rtspTransport,
     streamSource,
     windowWidth,
     windowHeight,

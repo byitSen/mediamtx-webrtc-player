@@ -17,8 +17,6 @@ function getDefaultSettings() {
     memoryWatchTriggerValue: 0,
     // MSE 协商优先编码：h265 | h264
     preferredVideoCodec: "h265",
-    // RTSP 拉流传输：udp | tcp
-    rtspTransport: "udp",
     // 拉流方式：rtsp=应用自动注册 | go2rtc=使用 Web 里配置的流名
     streamSource: "rtsp",
   };
@@ -75,8 +73,7 @@ export function loadSettings() {
     }
     const codec = String(merged.preferredVideoCodec || "h265").toLowerCase();
     merged.preferredVideoCodec = codec === "h264" ? "h264" : "h265";
-    const transport = String(merged.rtspTransport || "udp").toLowerCase();
-    merged.rtspTransport = transport === "tcp" ? "tcp" : "udp";
+    delete merged.rtspTransport;
     const src = String(merged.streamSource || "rtsp").toLowerCase();
     merged.streamSource = src === "go2rtc" ? "go2rtc" : "rtsp";
     return merged;

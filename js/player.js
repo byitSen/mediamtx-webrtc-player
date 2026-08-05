@@ -172,7 +172,6 @@ export class Player {
     const settings = getEffectiveSettings();
     const streamSource = settings.streamSource === "go2rtc" ? "go2rtc" : "rtsp";
     const preferredVideoCodec = settings.preferredVideoCodec === "h264" ? "h264" : "h265";
-    const rtspTransport = settings.rtspTransport === "tcp" ? "tcp" : "udp";
 
     const rtspUrl = (this.camera.rtspUrl || "").trim();
     const go2rtcSrc = (this.camera.go2rtcSrc || "").trim();
@@ -210,7 +209,7 @@ export class Player {
         if (!window.electronAPI.registerStream) {
           throw new Error("桌面 API 不支持注册流");
         }
-        const reg = await window.electronAPI.registerStream(rtspUrl, "", rtspTransport);
+        const reg = await window.electronAPI.registerStream(rtspUrl, "");
         if (!reg?.success || !reg.data?.mseUrl) {
           throw new Error(reg?.message || "注册 go2rtc 流失败");
         }

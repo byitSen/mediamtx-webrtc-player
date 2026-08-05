@@ -1,29 +1,30 @@
 /**
  * go2rtc WebSocket MSE → <video>
- * 低延迟优化：分片队列优先 append、短缓冲、按 gap 调 playbackRate 追直播边缘
+ *
+ * MSE 逻辑对齐官方 VideoRTC.onmse()：
+ * https://github.com/AlexxIT/go2rtc/blob/master/www/video-rtc.js
+ *
+ * 协议见：https://github.com/AlexxIT/go2rtc/blob/master/internal/api/ws/README.md
  */
-const MSE_CODECS = [
+const MSE_VIDEO_H265 = [
   "hvc1.1.6.L153.B0",
   "hvc1.1.6.L123.B0",
   "hvc1.1.6.L93.B0",
   "hev1.1.6.L93.B0",
+];
+const MSE_VIDEO_H264 = [
   "avc1.640033",
   "avc1.64002A",
   "avc1.640029",
   "avc1.640028",
   "avc1.4D401F",
   "avc1.42E01E",
-  "mp4a.40.2",
-  "mp4a.40.5",
-  "opus",
 ];
+const MSE_AUDIO = ["mp4a.40.2", "mp4a.40.5", "flac", "opus"];
 
-/** 保留的直播缓冲时长（秒）——过长会感觉掉帧/延迟 */
-const LIVE_BUFFER_SEC = 2.5;
-/** 队列总字节上限，超限丢弃最旧分片（背压） */
-const MAX_QUEUE_BYTES = 1.5 * 1024 * 1024;
-/** 队列分片数上限 */
-const MAX_QUEUE_CHUNKS = 48;
+/** 官方 VideoRTC 保留约 5 秒缓冲 */
+const LIVE_KEEP_SEC = 5;
+const PENDING_BYTES = 2 * 1024 * 1024;
 
 function getMediaSourceCtor() {
   if (typeof ManagedMediaSource !== "undefined") return ManagedMediaSource;
@@ -31,21 +32,25 @@ function getMediaSourceCtor() {
   return null;
 }
 
-function supportedCodecList(isTypeSupported, preferredVideoCodec = "h265") {
+function supportedCodecList(isTypeSupported, preferredVideoCodec = "h265", videoOnly = true) {
   const preferH264 = String(preferredVideoCodec).toLowerCase() === "h264";
-  const video = MSE_CODECS.filter((c) =>
-    preferH264 ? c.startsWith("avc1") : c.startsWith("hvc1") || c.startsWith("hev1")
-  );
-  const audio = MSE_CODECS.filter((c) => c.startsWith("mp4a") || c === "opus" || c === "flac");
-  return [...video, ...audio]
-    .filter((c) => {
-      try {
-        return isTypeSupported(`video/mp4; codecs="${c}"`);
-      } catch (_) {
-        return false;
-      }
-    })
-    .join(",");
+  const video = (preferH264 ? MSE_VIDEO_H264 : MSE_VIDEO_H265).filter((c) => {
+    try {
+      return isTypeSupported(`video/mp4; codecs="${c}"`);
+    } catch (_) {
+      return false;
+    }
+  });
+  if (!video.length) return "";
+  if (videoOnly) return video.join(",");
+  const audio = MSE_AUDIO.filter((c) => {
+    try {
+      return isTypeSupported(`video/mp4; codecs="${c}"`);
+    } catch (_) {
+      return false;
+    }
+  });
+  return [...video, ...audio].join(",");
 }
 
 function toU8(data) {
@@ -68,19 +73,21 @@ export class Go2rtcMsePlayer {
     this.objectUrl = null;
     this.destroyed = false;
     this._mime = "";
-    /** @type {Uint8Array[]} */
-    this._queue = [];
-    this._queueBytes = 0;
+    /** @type {Uint8Array} */
+    this._buf = new Uint8Array(PENDING_BYTES);
+    this._bufLen = 0;
     this._statsTimer = null;
-    this._chaseTimer = null;
     this._lastFrames = 0;
+    this._lastDropped = 0;
     this._lastStatsAt = 0;
     this._onMessage = null;
+    this._onVisibility = null;
+    this._pausedForHidden = false;
   }
 
   /**
    * @param {string} wsUrl e.g. ws://127.0.0.1:1984/api/ws?src=cam_xxx
-   * @param {{ preferredVideoCodec?: "h265"|"h264" }} [opts]
+   * @param {{ preferredVideoCodec?: "h265"|"h264", videoOnly?: boolean }} [opts]
    */
   async play(wsUrl, opts = {}) {
     this.destroyMediaOnly();
@@ -93,7 +100,8 @@ export class Go2rtcMsePlayer {
     }
 
     const prefer = opts.preferredVideoCodec === "h264" ? "h264" : "h265";
-    const codecs = supportedCodecList(MS.isTypeSupported.bind(MS), prefer);
+    const videoOnly = opts.videoOnly !== false;
+    const codecs = supportedCodecList(MS.isTypeSupported.bind(MS), prefer, videoOnly);
     if (!codecs) {
       throw new Error(
         prefer === "h265"
@@ -101,7 +109,9 @@ export class Go2rtcMsePlayer {
           : "当前环境不支持 H.264 MSE"
       );
     }
-    console.info(`[mse] 协商编码优先: ${prefer} → ${codecs}`);
+    console.info(`[mse] VideoRTC 对齐 | ${prefer}${videoOnly ? " video-only" : ""} → ${codecs}`);
+
+    this._bindVisibility();
 
     await new Promise((resolve, reject) => {
       let settled = false;
@@ -143,14 +153,9 @@ export class Go2rtcMsePlayer {
           if (msg.type === "mse" && msg.value) {
             try {
               this._mime = msg.value;
-              this.sb = this.ms.addSourceBuffer(msg.value);
-              // sequence：直播时间戳间隙更稳，减少卡顿
-              this.sb.mode = "sequence";
-              this.sb.addEventListener("updateend", () => this._onUpdateEnd());
+              this._setupSourceBuffer(msg.value);
               this._emitStatus("online");
               this._startStats();
-              this._startChaseLoop();
-              this._pump();
               ok();
             } catch (e) {
               fail(e);
@@ -158,7 +163,7 @@ export class Go2rtcMsePlayer {
           }
           return;
         }
-        this._enqueue(toU8(ev.data));
+        this._onBinary(ev.data);
       };
       ws.addEventListener("message", this._onMessage);
 
@@ -204,152 +209,110 @@ export class Go2rtcMsePlayer {
     });
   }
 
+  /**
+   * 官方 VideoRTC.onmse 的 SourceBuffer + updateend + 追帧
+   */
+  _setupSourceBuffer(mime) {
+    const ms = this.ms;
+    const sb = ms.addSourceBuffer(mime);
+    // 官方注释：segments or sequence —— 默认用 segments
+    sb.mode = "segments";
+    this.sb = sb;
+    this._bufLen = 0;
+
+    sb.addEventListener("updateend", () => {
+      if (this.destroyed || !this.sb) return;
+
+      // 1) 优先把积压分片 append 完
+      if (!sb.updating && this._bufLen > 0) {
+        try {
+          const data = this._buf.slice(0, this._bufLen);
+          sb.appendBuffer(data);
+          this._bufLen = 0;
+        } catch (_) {}
+        return;
+      }
+
+      // 2) 官方追帧：保留 5s、必要时拉回、用 playbackRate ≈ gap
+      if (!sb.updating && sb.buffered && sb.buffered.length) {
+        try {
+          const end = sb.buffered.end(sb.buffered.length - 1);
+          const start = end - LIVE_KEEP_SEC;
+          const start0 = sb.buffered.start(0);
+          if (start > start0) {
+            sb.remove(start0, start);
+            try {
+              ms.setLiveSeekableRange?.(start, end);
+            } catch (_) {}
+            return; // remove 会再触发 updateend
+          }
+          if (this.video.currentTime < start) {
+            this.video.currentTime = start;
+          }
+          const gap = end - this.video.currentTime;
+          // 官方原式：有缓冲就按 gap 倍速，贴边则降到 0.1
+          this.video.playbackRate = gap > 0.1 ? gap : 0.1;
+        } catch (_) {}
+      }
+    });
+  }
+
+  /** 官方 ondata：SB 忙或已有积压则拼进 buf，否则直接 append */
+  _onBinary(data) {
+    if (this.destroyed || !this.sb) return;
+    const sb = this.sb;
+    if (sb.updating || this._bufLen > 0) {
+      const b = toU8(data);
+      if (this._bufLen + b.byteLength > this._buf.byteLength) {
+        // 极端积压：丢掉最旧 pending，保住直播边（官方未处理溢出，这里兜底）
+        this._bufLen = 0;
+      }
+      if (this._bufLen + b.byteLength <= this._buf.byteLength) {
+        this._buf.set(b, this._bufLen);
+        this._bufLen += b.byteLength;
+      }
+    } else {
+      try {
+        sb.appendBuffer(data);
+      } catch (_) {}
+    }
+  }
+
   _send(obj) {
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(obj));
     }
   }
 
-  _enqueue(chunk) {
-    if (!chunk?.byteLength || this.destroyed) return;
-    this._queue.push(chunk);
-    this._queueBytes += chunk.byteLength;
-
-    // 背压：丢最旧分片，保住直播边缘
-    while (
-      this._queue.length > 1 &&
-      (this._queueBytes > MAX_QUEUE_BYTES || this._queue.length > MAX_QUEUE_CHUNKS)
-    ) {
-      const dropped = this._queue.shift();
-      this._queueBytes -= dropped.byteLength;
-    }
-    this._pump();
-  }
-
-  /** 优先 append，trim/chase 让路 */
-  _pump() {
-    if (!this.sb || this.destroyed || this.sb.updating) return;
-
-    if (this._queue.length) {
-      const chunk = this._queue.shift();
-      this._queueBytes = Math.max(0, this._queueBytes - chunk.byteLength);
-      try {
-        this.sb.appendBuffer(chunk);
-      } catch (e) {
-        const name = e?.name || "";
-        if (name === "QuotaExceededError") {
-          // 缓冲满：丢掉队列前半 + 强力裁剪后再试
-          while (this._queue.length > 4) {
-            const d = this._queue.shift();
-            this._queueBytes -= d.byteLength;
-          }
-          this._queue.unshift(chunk);
-          this._queueBytes += chunk.byteLength;
-          this._forceTrim(1.2);
-          return;
-        }
-        console.warn("[mse] appendBuffer", name, e?.message || e);
-        // 跳过坏片，继续
-        this._pump();
-      }
-      return;
-    }
-
-    this._trimAndChase();
-  }
-
-  _onUpdateEnd() {
-    if (!this.sb || this.destroyed) return;
-    this._pump();
-  }
-
-  _forceTrim(keepSec) {
-    const sb = this.sb;
-    if (!sb || sb.updating || !sb.buffered?.length) return;
-    try {
-      const end = sb.buffered.end(sb.buffered.length - 1);
-      const start0 = sb.buffered.start(0);
-      const keepFrom = Math.max(start0, end - keepSec);
-      if (keepFrom > start0 + 0.05) {
-        sb.remove(start0, keepFrom);
-      }
-    } catch (_) {}
-  }
-
-  /**
-   * 对齐 go2rtc VideoRTC：短缓冲 + 按 gap 调速追边缘
-   * gap 大 → 加速；几乎贴边 → 略降速等数据，避免抽帧感
-   */
-  _trimAndChase() {
-    const sb = this.sb;
-    const video = this.video;
-    if (!sb || sb.updating || !sb.buffered?.length || this.destroyed) return;
-
-    // 队列非空时让路给 append
-    if (this._queue.length) {
-      this._pump();
-      return;
-    }
-
-    try {
-      const end = sb.buffered.end(sb.buffered.length - 1);
-      const start0 = sb.buffered.start(0);
-      const keepFrom = Math.max(start0, end - LIVE_BUFFER_SEC);
-
-      if (keepFrom > start0 + 0.35) {
-        sb.remove(start0, keepFrom);
-        try {
-          this.ms?.setLiveSeekableRange?.(keepFrom, end);
-        } catch (_) {}
-        return;
-      }
-
-      if (video.paused) {
-        video.play().catch(() => {});
-      }
-
-      // 掉到缓冲起点之前：拉回
-      if (video.currentTime < keepFrom) {
-        video.currentTime = keepFrom;
-      }
-
-      const gap = end - video.currentTime;
-      // 落后过多：硬追到边缘附近
-      if (gap > 1.0) {
-        video.currentTime = Math.max(keepFrom, end - 0.25);
-        video.playbackRate = 1;
-        return;
-      }
-      // VideoRTC：playbackRate ≈ gap，落后则加速追平
-      if (gap > 0.12) {
-        video.playbackRate = Math.min(2.0, Math.max(1.05, gap));
-      } else if (gap < 0.04) {
-        video.playbackRate = 0.9;
-      } else {
-        video.playbackRate = 1;
-      }
-    } catch (_) {}
-  }
-
-  _startChaseLoop() {
-    this._stopChaseLoop();
-    // 即使 SourceBuffer 空闲也周期性追帧，避免只在 updateend 才调整
-    this._chaseTimer = setInterval(() => {
+  _bindVisibility() {
+    this._unbindVisibility();
+    this._onVisibility = () => {
       if (this.destroyed) return;
-      if (!this.sb?.updating) this._trimAndChase();
-    }, 250);
+      if (document.hidden) {
+        this._pausedForHidden = true;
+        try {
+          this.video.pause();
+        } catch (_) {}
+      } else if (this._pausedForHidden) {
+        this._pausedForHidden = false;
+        this.video.play().catch(() => {});
+      }
+    };
+    document.addEventListener("visibilitychange", this._onVisibility);
   }
 
-  _stopChaseLoop() {
-    if (this._chaseTimer) {
-      clearInterval(this._chaseTimer);
-      this._chaseTimer = null;
+  _unbindVisibility() {
+    if (this._onVisibility) {
+      document.removeEventListener("visibilitychange", this._onVisibility);
+      this._onVisibility = null;
     }
+    this._pausedForHidden = false;
   }
 
   _startStats() {
     this._stopStats();
     this._lastFrames = 0;
+    this._lastDropped = 0;
     this._lastStatsAt = performance.now();
     this._statsTimer = setInterval(() => this._pollStats(), 1000);
   }
@@ -366,14 +329,14 @@ export class Go2rtcMsePlayer {
     const video = this.video;
     try {
       let frames = 0;
-      let dropped = 0;
+      let droppedTotal = 0;
       if (typeof video.getVideoPlaybackQuality === "function") {
         const q = video.getVideoPlaybackQuality();
         frames = q.totalVideoFrames || 0;
-        dropped = q.droppedVideoFrames || 0;
+        droppedTotal = q.droppedVideoFrames || 0;
       } else if (typeof video.webkitDecodedFrameCount === "number") {
         frames = video.webkitDecodedFrameCount;
-        dropped = video.webkitDroppedFrameCount || 0;
+        droppedTotal = video.webkitDroppedFrameCount || 0;
       }
       const now = performance.now();
       const dt = (now - this._lastStatsAt) / 1000;
@@ -381,9 +344,13 @@ export class Go2rtcMsePlayer {
       if (dt > 0 && frames >= this._lastFrames) {
         fps = (frames - this._lastFrames) / dt;
       }
+      // 丢帧改为近 1 秒增量（与 FPS 同窗口），不再显示累计
+      const dropped =
+        droppedTotal >= this._lastDropped ? droppedTotal - this._lastDropped : 0;
       this._lastFrames = frames;
+      this._lastDropped = droppedTotal;
       this._lastStatsAt = now;
-      if (fps != null) this.hooks.onStats({ fps, dropped });
+      if (fps != null) this.hooks.onStats({ fps, dropped, droppedTotal });
     } catch (_) {}
   }
 
@@ -397,7 +364,7 @@ export class Go2rtcMsePlayer {
 
   destroyMediaOnly() {
     this._stopStats();
-    this._stopChaseLoop();
+    this._unbindVisibility();
     if (this.ws) {
       try {
         if (this._onMessage) this.ws.removeEventListener("message", this._onMessage);
@@ -411,8 +378,7 @@ export class Go2rtcMsePlayer {
     this._onMessage = null;
     this.sb = null;
     this.ms = null;
-    this._queue = [];
-    this._queueBytes = 0;
+    this._bufLen = 0;
     if (this.objectUrl) {
       try {
         URL.revokeObjectURL(this.objectUrl);

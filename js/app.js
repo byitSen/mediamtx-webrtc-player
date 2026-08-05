@@ -50,6 +50,9 @@ const settingGridColumns = document.getElementById("settingGridColumns");
 const settingMaxActive = document.getElementById("settingMaxActive");
 const settingPreferredVideoCodec = document.getElementById("settingPreferredVideoCodec");
 const settingRtspTransport = document.getElementById("settingRtspTransport");
+const settingStreamSource = document.getElementById("settingStreamSource");
+const settingCamerasListLabel = document.getElementById("settingCamerasListLabel");
+const settingRtspTransportHint = document.getElementById("settingRtspTransportHint");
 const settingCamerasList = document.getElementById("settingCamerasList");
 const settingAddCamera = document.getElementById("settingAddCamera");
 const settingsBtn = document.getElementById("settingsBtn");
@@ -94,7 +97,27 @@ const WINDOW_WIDTH_MAX = 3840;
 const WINDOW_HEIGHT_MIN = 420;
 const WINDOW_HEIGHT_MAX = 2160;
 
-function renderCameraRow(name = "", rtspUrl = "", index = 0) {
+function getStreamSourceMode() {
+  return settingStreamSource?.value === "go2rtc" ? "go2rtc" : "rtsp";
+}
+
+function updateStreamSourceUi() {
+  const mode = getStreamSourceMode();
+  const go2rtc = mode === "go2rtc";
+  if (settingCamerasListLabel) {
+    settingCamerasListLabel.textContent = go2rtc
+      ? "摄像头列表（名称 / go2rtc 流名）"
+      : "摄像头列表（名称 / RTSP 地址）";
+  }
+  if (settingRtspTransport) {
+    settingRtspTransport.disabled = go2rtc;
+  }
+  settingCamerasList?.querySelectorAll(".camera-row input.source-input").forEach((input) => {
+    input.placeholder = go2rtc ? "camera1（与 go2rtc Web 流名一致）" : "rtsp://127.0.0.1:554/stream1";
+  });
+}
+
+function renderCameraRow(name = "", sourceValue = "", index = 0) {
   if (!settingCamerasList) return;
   const row = document.createElement("div");
   row.className = "camera-row";
@@ -105,10 +128,12 @@ function renderCameraRow(name = "", rtspUrl = "", index = 0) {
   nameInput.placeholder = "名称";
   nameInput.value = name;
 
-  const urlInput = document.createElement("input");
-  urlInput.type = "text";
-  urlInput.placeholder = "rtsp://127.0.0.1:554/stream1";
-  urlInput.value = rtspUrl;
+  const sourceInput = document.createElement("input");
+  sourceInput.type = "text";
+  sourceInput.className = "source-input";
+  const go2rtc = getStreamSourceMode() === "go2rtc";
+  sourceInput.placeholder = go2rtc ? "camera1（与 go2rtc Web 流名一致）" : "rtsp://127.0.0.1:554/stream1";
+  sourceInput.value = sourceValue;
 
   const removeBtn = document.createElement("button");
   removeBtn.type = "button";
@@ -117,7 +142,7 @@ function renderCameraRow(name = "", rtspUrl = "", index = 0) {
   removeBtn.addEventListener("click", () => row.remove());
 
   row.appendChild(nameInput);
-  row.appendChild(urlInput);
+  row.appendChild(sourceInput);
   row.appendChild(removeBtn);
   settingCamerasList.appendChild(row);
 }
@@ -223,10 +248,21 @@ function openSettings() {
   if (settingRtspTransport) {
     settingRtspTransport.value = cfg.rtspTransport === "tcp" ? "tcp" : "udp";
   }
+  if (settingStreamSource) {
+    settingStreamSource.value = cfg.streamSource === "go2rtc" ? "go2rtc" : "rtsp";
+  }
+  updateStreamSourceUi();
 
   if (settingCamerasList) {
     settingCamerasList.innerHTML = "";
-    cameras.forEach((c, i) => renderCameraRow(c.name, c.rtspUrl || "", i));
+    const mode = cfg.streamSource === "go2rtc" ? "go2rtc" : "rtsp";
+    cameras.forEach((c, i) => {
+      const src =
+        mode === "go2rtc"
+          ? c.go2rtcSrc || c.path || ""
+          : c.rtspUrl || "";
+      renderCameraRow(c.name, src, i);
+    });
   }
 
   const winW = Math.max(WINDOW_WIDTH_MIN, Math.min(WINDOW_WIDTH_MAX, cfg.windowWidth ?? 1020));
@@ -312,14 +348,34 @@ function addMemoryOffsetRow() {
 }
 
 function saveSettingsFromForm() {
+  const streamSource = settingStreamSource?.value === "go2rtc" ? "go2rtc" : "rtsp";
   const cameras = [];
   settingCamerasList?.querySelectorAll(".camera-row").forEach((row) => {
     const inputs = row.querySelectorAll("input");
     const name = (inputs[0]?.value || "").trim();
-    const rtspUrl = (inputs[1]?.value || "").trim();
-    if (rtspUrl) cameras.push({ name: name || "未命名", rtspUrl });
+    const source = (inputs[1]?.value || "").trim();
+    if (!source) return;
+    if (streamSource === "go2rtc") {
+      cameras.push({
+        name: name || "未命名",
+        go2rtcSrc: source,
+        rtspUrl: "",
+      });
+    } else {
+      cameras.push({
+        name: name || "未命名",
+        rtspUrl: source,
+        go2rtcSrc: undefined,
+      });
+    }
   });
-  if (!cameras.length) cameras.push({ name: "摄像头1", rtspUrl: "rtsp://127.0.0.1:554/stream1" });
+  if (!cameras.length) {
+    cameras.push(
+      streamSource === "go2rtc"
+        ? { name: "摄像头1", go2rtcSrc: "camera1", rtspUrl: "" }
+        : { name: "摄像头1", rtspUrl: "rtsp://127.0.0.1:554/stream1" }
+    );
+  }
 
   const current = loadSettings();
   const gridColumns = Math.max(1, Math.min(4, parseInt(settingGridColumns?.value || "2", 10) || 2));
@@ -348,6 +404,7 @@ function saveSettingsFromForm() {
     maxActiveConnections: maxActive,
     preferredVideoCodec,
     rtspTransport,
+    streamSource,
     windowWidth,
     windowHeight,
     screenshotShortcut: screenshotShortcut || undefined,
@@ -627,6 +684,12 @@ function setupGlobalControls() {
   if (settingAddCamera) settingAddCamera.addEventListener("click", addCameraRow);
   if (settingAddMemoryOffset) settingAddMemoryOffset.addEventListener("click", addMemoryOffsetRow);
   if (openGo2rtcWebBtn) openGo2rtcWebBtn.addEventListener("click", openGo2rtcWeb);
+  if (settingStreamSource) {
+    settingStreamSource.addEventListener("change", () => {
+      // 切换模式时保留已填内容，仅更新占位与传输控件
+      updateStreamSourceUi();
+    });
+  }
 
   const chooseSaveDirBtn = document.getElementById("chooseSaveDirBtn");
   const settingSaveDirPath = document.getElementById("settingSaveDirPath");

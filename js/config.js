@@ -19,6 +19,8 @@ function getDefaultSettings() {
     preferredVideoCodec: "h265",
     // RTSP 拉流传输：udp | tcp
     rtspTransport: "udp",
+    // 拉流方式：rtsp=应用自动注册 | go2rtc=使用 Web 里配置的流名
+    streamSource: "rtsp",
   };
 }
 
@@ -27,10 +29,17 @@ function migrateCameras(cameras) {
   return cameras.map((c) => {
     const name = c?.name || "未命名";
     const rtspUrl = (c?.rtspUrl || "").trim();
-    if (rtspUrl) return { name, rtspUrl };
-    // 旧版 path 仅作显示后备，无法直接播放
+    const go2rtcSrc = (c?.go2rtcSrc || "").trim();
+    // 旧版 path 仅作显示后备
     const path = (c?.path || "").trim();
-    return { name, rtspUrl: path.startsWith("rtsp") ? path : "", path: path || undefined };
+    const migratedRtsp =
+      rtspUrl || (path.startsWith("rtsp") ? path : "");
+    return {
+      name,
+      rtspUrl: migratedRtsp,
+      go2rtcSrc: go2rtcSrc || undefined,
+      path: path && !path.startsWith("rtsp") ? path : undefined,
+    };
   });
 }
 
@@ -68,6 +77,8 @@ export function loadSettings() {
     merged.preferredVideoCodec = codec === "h264" ? "h264" : "h265";
     const transport = String(merged.rtspTransport || "udp").toLowerCase();
     merged.rtspTransport = transport === "tcp" ? "tcp" : "udp";
+    const src = String(merged.streamSource || "rtsp").toLowerCase();
+    merged.streamSource = src === "go2rtc" ? "go2rtc" : "rtsp";
     return merged;
   } catch (e) {
     console.warn("loadSettings error", e);
